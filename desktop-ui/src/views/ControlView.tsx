@@ -9,7 +9,12 @@ import {
   videoGeometryStyle,
 } from "../format";
 import { comboFromEvent, comboLabel } from "../hotkeys";
-import { positionNow, useTicker, type Snapshot, type Store } from "../store";
+import {
+  useDisplayPosition,
+  useTicker,
+  type Snapshot,
+  type Store,
+} from "../store";
 import { isTauri } from "../transport";
 import type {
   AppState,
@@ -35,6 +40,7 @@ export function ControlView({ store }: { store: Store }) {
   const [modal, setModal] = useState<ModalRequest | null>(null);
 
   useTicker(!!snap && snap.state.transport.playing);
+  const displayPos = useDisplayPosition(snap);
 
   // Files dropped anywhere on the control window join the playlist. Only the
   // native window can produce real paths; web remotes use the app to add.
@@ -126,7 +132,12 @@ export function ControlView({ store }: { store: Store }) {
         <div className="col">
           <div className="col-label">Playlist</div>
           <div className="panel">
-            <PlaylistSection snap={snap} send={send} onClear={confirmClear} />
+            <PlaylistSection
+              snap={snap}
+              posMs={displayPos}
+              send={send}
+              onClear={confirmClear}
+            />
           </div>
         </div>
 
@@ -165,7 +176,7 @@ export function ControlView({ store }: { store: Store }) {
               />
             ) : (
               <>
-                <NowPlayingSection snap={snap} send={send} />
+                <NowPlayingSection snap={snap} posMs={displayPos} send={send} />
                 <TransportSection snap={snap} send={send} />
                 <EndModeSection state={state} send={send} />
                 <GeometrySection state={state} send={send} />
@@ -245,7 +256,7 @@ const totalMs = (clips: Clip[]) =>
  * Time left in the show if it plays through: the rest of the current clip
  * plus every clip after it (or from the cued clip when nothing is loaded).
  */
-function remainingMs(snap: Snapshot): number {
+function remainingMs(snap: Snapshot, posMs: number): number {
   const { clips, transport, selected } = snap.state;
   const anchor = transport.current ?? selected;
   if (!anchor) return totalMs(clips);
@@ -254,7 +265,7 @@ function remainingMs(snap: Snapshot): number {
   const rest = totalMs(clips.slice(i + 1));
   if (transport.current) {
     const out = clipOut(clips[i], transport.durationMs);
-    const left = Math.max(0, out - positionNow(snap));
+    const left = Math.max(0, out - posMs);
     return left + rest;
   }
   return clipRuntimeMs(clips[i]) + rest;
@@ -262,10 +273,12 @@ function remainingMs(snap: Snapshot): number {
 
 function PlaylistSection({
   snap,
+  posMs,
   send,
   onClear,
 }: {
   snap: Snapshot;
+  posMs: number;
   send: Send;
   onClear: () => void;
 }) {
@@ -286,7 +299,8 @@ function PlaylistSection({
         Playlist
         <span className="bar-note">
           {clips.length} {clips.length === 1 ? "clip" : "clips"} · total{" "}
-          {formatTime(totalMs(clips))} · remaining {formatTime(remainingMs(snap))}
+          {formatTime(totalMs(clips))} · remaining{" "}
+          {formatTime(remainingMs(snap, posMs))}
         </span>
       </SectionBar>
 
@@ -481,13 +495,21 @@ function DurationProber({ state, send }: { state: AppState; send: Send }) {
 // Now playing — big timecodes + progress
 // ---------------------------------------------------------------------------
 
-function NowPlayingSection({ snap, send }: { snap: Snapshot; send: Send }) {
+function NowPlayingSection({
+  snap,
+  posMs,
+  send,
+}: {
+  snap: Snapshot;
+  posMs: number;
+  send: Send;
+}) {
   const state = snap.state;
   const t = state.transport;
   const clip = t.current
     ? state.clips.find((c) => c.id === t.current) ?? null
     : null;
-  const pos = positionNow(snap);
+  const pos = posMs;
   // All show timecodes are trim-aware: elapsed/remaining/duration describe
   // the in→out range, not the raw file.
   const inMs = clip?.inMs ?? 0;
@@ -522,7 +544,7 @@ function NowPlayingSection({ snap, send }: { snap: Snapshot; send: Send }) {
         Now Playing
         <span className={"status-chip " + status.toLowerCase()}>{status}</span>
       </SectionBar>
-      <ControlPreview snap={snap} />
+      <ControlPreview snap={snap} posMs={posMs} />
       <div
         className="now-playing-name"
         title={clip ? clip.path : "Output is black — TAKE plays the cued clip"}
@@ -583,12 +605,12 @@ function NowPlayingSection({ snap, send }: { snap: Snapshot; send: Send }) {
 }
 
 /**
- * Preview monitor: a muted local replica of the program output. It follows
- * the same transport state the output obeys and snaps to the extrapolated
- * position whenever it drifts more than half a second, so it tracks seeks
- * and Takes without ever being the timing authority.
+ * Preview monitor: a muted local replica of the program output. It free-runs
+ * on its own decode clock — constantly chasing the reported position caused
+ * a visible seek-stutter — and re-aligns only on load/seek/pause changes or
+ * when it has genuinely drifted (>1.5s, checked every 2s).
  */
-function ControlPreview({ snap }: { snap: Snapshot }) {
+function ControlPreview({ snap, posMs }: { snap: Snapshot; posMs: number }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const state = snap.state;
   const t = state.transport;
@@ -596,21 +618,63 @@ function ControlPreview({ snap }: { snap: Snapshot }) {
     ? state.clips.find((c) => c.id === t.current) ?? null
     : null;
   const src = clip ? mediaUrl(state, clip.id, t.loadSeq) : null;
+  const playing = t.playing && !!src;
+
+  const posRef = useRef(0);
+  posRef.current = posMs;
+
+  // Hard alignment on load and commanded seeks.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !src) return;
+    const sync = () => {
+      v.currentTime = posRef.current / 1000;
+    };
+    if (v.readyState >= 1) sync();
+    else v.addEventListener("loadedmetadata", sync, { once: true });
+    return () => v.removeEventListener("loadedmetadata", sync);
+  }, [src, t.seekSeq]);
 
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !src) return;
-    const pos = positionNow(snap) / 1000;
-    if (Math.abs(v.currentTime - pos) > 0.5) v.currentTime = pos;
-    if (t.playing && v.paused) v.play().catch(() => {});
-    if (!t.playing && !v.paused) v.pause();
-  }, [snap, src, t.playing]);
+    if (playing) {
+      v.play().catch(() => {});
+    } else {
+      v.pause();
+      // Land on the frame the output is holding (end of clip, pause point).
+      if (v.readyState >= 1) v.currentTime = posRef.current / 1000;
+    }
+  }, [playing, src, t.seekSeq]);
+
+  // Occasional drift correction; otherwise leave the element alone. Never
+  // seek a paused element (e.g. autoplay still blocked) — that's pure thrash.
+  useEffect(() => {
+    if (!src || !playing) return;
+    const id = setInterval(() => {
+      const v = videoRef.current;
+      if (!v) return;
+      if (v.paused && !v.ended) v.play().catch(() => {});
+      else if (Math.abs(v.currentTime * 1000 - posRef.current) > 1500) {
+        v.currentTime = posRef.current / 1000;
+      }
+    }, 2000);
+    return () => clearInterval(id);
+  }, [src, playing]);
 
   return (
     <div className="control-preview" title="Muted preview of the program output">
       {src && (
         <video
-          ref={videoRef}
+          // React doesn't always reflect `muted` as an attribute; set it
+          // imperatively too so autoplay heuristics see a muted element.
+          ref={(v) => {
+            videoRef.current = v;
+            if (v) {
+              v.muted = true;
+              v.defaultMuted = true;
+            }
+          }}
           src={src}
           style={videoGeometryStyle(state.geometry)}
           muted

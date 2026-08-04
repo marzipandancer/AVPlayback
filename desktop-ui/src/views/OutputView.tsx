@@ -43,6 +43,7 @@ export function OutputView({ store }: { store: Store }) {
         positionMs: v.currentTime * 1000,
         durationMs: Number.isFinite(v.duration) ? v.duration * 1000 : 0,
         ended,
+        native: isTauri,
       },
     });
   };

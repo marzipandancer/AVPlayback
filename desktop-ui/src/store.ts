@@ -47,6 +47,53 @@ export function positionNow(snap: Snapshot): number {
 }
 
 /**
+ * Position for on-screen readouts. Raw extrapolation re-bases on every
+ * progress report, and each report carries its own transport latency — the
+ * jitter makes a 60fps countdown flicker across second boundaries. This
+ * clock slews instead: it runs at 0.5×–1.5× media rate until re-aligned
+ * with the extrapolated target, so it never visibly jumps or runs
+ * backward, and hard-snaps only on load/seek/pause or real desync.
+ */
+export function useDisplayPosition(snap: Snapshot | null): number {
+  const ref = useRef<{
+    pos: number;
+    at: number;
+    loadSeq: number;
+    seekSeq: number;
+  } | null>(null);
+  if (!snap) {
+    ref.current = null;
+    return 0;
+  }
+  const t = snap.state.transport;
+  const target = positionNow(snap);
+  const now = performance.now();
+  const prev = ref.current;
+  let pos: number;
+  if (
+    !prev ||
+    prev.loadSeq !== t.loadSeq ||
+    prev.seekSeq !== t.seekSeq ||
+    !t.playing
+  ) {
+    pos = target;
+  } else {
+    const dt = Math.max(0, now - prev.at);
+    const err = target - (prev.pos + dt);
+    if (Math.abs(err) > 700) {
+      pos = target;
+    } else {
+      const rate = err > 40 ? 1.5 : err < -40 ? 0.5 : 1;
+      pos = prev.pos + dt * rate;
+    }
+  }
+  if (t.durationMs > 0) pos = Math.min(pos, t.durationMs);
+  pos = Math.max(0, pos);
+  ref.current = { pos, at: now, loadSeq: t.loadSeq, seekSeq: t.seekSeq };
+  return pos;
+}
+
+/**
  * Re-render on animation frames while media is playing so the timecodes are
  * smooth without any network traffic.
  */

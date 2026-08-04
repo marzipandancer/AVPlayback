@@ -137,6 +137,8 @@ export type Command =
         positionMs: number;
         durationMs: number;
         ended: boolean;
+        /** True when reported by the native output window. */
+        native: boolean;
       };
     }
   | {

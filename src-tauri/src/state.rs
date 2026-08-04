@@ -618,14 +618,16 @@ pub enum Command {
     SetOutputScale { scale: f64 },
     SetVolume { volume: f64 },
     SetMuted { enabled: bool },
-    /// Progress report from the output window's <video> element. Position
-    /// and duration only — play/pause intent belongs to the operator and is
+    /// Progress report from an output view's <video> element. Position and
+    /// duration only — play/pause intent belongs to the operator and is
     /// never overwritten by reports.
     MediaStatus {
         load_seq: u64,
         position_ms: f64,
         duration_ms: f64,
         ended: bool,
+        #[serde(default)]
+        native: bool,
     },
     // Windows / settings
     SetHotkey { action: HotkeyAction, binding: Option<String> },
@@ -890,13 +892,22 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                 position_ms,
                 duration_ms,
                 ended,
+                native,
             } => {
+                // With the native output window open it is the sole timing
+                // authority; web outputs are confidence monitors whose
+                // reports are ignored, so two clocks can't fight over the
+                // position (that ping-pong made the timecodes flicker).
+                let authoritative = native || app.get_window("output").is_none();
                 // Stale reports from a previous load must not disturb the
                 // clip that replaced it. Reports rebase position/duration
                 // only — the element pausing to buffer or load must never
                 // cancel the operator's play intent (that caused v0.1's
                 // "keeps pausing itself" bug).
-                if load_seq == st.transport.load_seq && st.transport.current.is_some() {
+                if authoritative
+                    && load_seq == st.transport.load_seq
+                    && st.transport.current.is_some()
+                {
                     if position_ms.is_finite() {
                         st.transport.position_ms = position_ms.max(0.0);
                     }
