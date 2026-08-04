@@ -1,0 +1,14 @@
+{
+  "name": "AVPlayback",
+  "version": "1.0.0",
+  "description": "PlayBack — playlist video playback for live events, with remote web control",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "license": "ISC",
+  "packageManager": "pnpm@10.21.0",
+  "devDependencies": {
+    "@tauri-apps/cli": "1.6.3"
+  }
+}

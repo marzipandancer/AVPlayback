@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PlayBack — User Guide</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+         background: #333; color: #eee; max-width: 760px; margin: 0 auto;
+         padding: 24px 18px 60px; line-height: 1.55; }
+  h1 { font-size: 28px; } h1 .mono { color: #66aaff; }
+  h2 { font-size: 18px; background: #003366; padding: 5px 10px; border-radius: 4px; margin-top: 30px; }
+  code, kbd { background: #111; border: 1px solid #555; border-radius: 4px; padding: 1px 6px;
+        font-family: ui-monospace, monospace; font-size: 13px; }
+  kbd { background: #222; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  td, th { border: 1px solid #555; padding: 5px 9px; text-align: left; }
+  th { background: #222; }
+  .note { color: #ffcc00; font-size: 14px; }
+</style>
+</head>
+<body>
+<h1><span class="mono">▶</span>PlayBack — User Guide</h1>
+<p>PlayBack is playlist video playback for live events: cue clips on the control
+surface, punch <b>TAKE</b>, and the program output plays them full screen on the
+selected display. Any browser on the network can mirror the control surface or
+the output.</p>
+
+<h2>Quick Start</h2>
+<ol>
+  <li>Drop video files anywhere on the control window (or click <b>Add Files…</b>).</li>
+  <li>Click a clip to <b>cue</b> it (blue outline). Double-click to play it immediately.</li>
+  <li>Press <b>TAKE</b> (or <kbd>Space</kbd>). The output window opens by itself if it isn't already up.</li>
+  <li><b>KILL</b> (<kbd>K</kbd>) cuts to black instantly. <b>Pause/Resume</b> is <kbd>P</kbd>.</li>
+</ol>
+
+<h2>When A Clip Ends</h2>
+<table>
+  <tr><th>Mode</th><th>Behavior</th></tr>
+  <tr><td>Hold</td><td>Pause on the last frame (default)</td></tr>
+  <tr><td>Black</td><td>Cut to black</td></tr>
+  <tr><td>Play Next</td><td>Play the next clip in the list immediately</td></tr>
+  <tr><td>Loop</td><td>Loop the same clip</td></tr>
+  <tr><td>Cue Next</td><td>Load the next clip paused on its first frame</td></tr>
+</table>
+
+<h2>Default Hotkeys</h2>
+<table>
+  <tr><td><kbd>Space</kbd></td><td>Take (play the cued clip)</td>
+      <td><kbd>P</kbd></td><td>Pause / Resume</td></tr>
+  <tr><td><kbd>K</kbd></td><td>Kill to black</td>
+      <td><kbd>R</kbd></td><td>Restart clip</td></tr>
+  <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>Cue previous / next clip</td>
+      <td><kbd>←</kbd> / <kbd>→</kbd></td><td>Jump ±10 seconds</td></tr>
+  <tr><td><kbd>L</kbd></td><td>Launch output window</td>
+      <td><kbd>F</kbd></td><td>Toggle fullscreen</td></tr>
+</table>
+<p>All bindings are configurable in Advanced Settings (⚙).</p>
+
+<h2>Remote Access</h2>
+<p>Any device on the same network can open:</p>
+<p>Control surface: <code>http://10.1.10.140:3100/control</code><br>
+Program output / confidence monitor: <code>http://10.1.10.140:3100/output</code></p>
+<p class="note">Browsers block unmuted autoplay — a web output view shows
+“Click to start playback” once; click it and it will follow every Take from
+then on.</p>
+
+<h2>Formats</h2>
+<p>PlayBack plays what the platform's media engine plays. H.264/AAC in
+<code>.mp4</code> or <code>.mov</code> is the safe bet everywhere; HEVC works on
+macOS. ProRes and other mezzanine codecs are not supported — transcode show
+files to H.264 for playback.</p>
+
+<h2>Troubleshooting</h2>
+<ul>
+  <li><b>Clip shows “missing”</b> — the file moved since it was added. Put it
+      back or re-add it. Playlists store paths, not copies.</li>
+  <li><b>No remote access</b> — check the Server IP in the footer and that the
+      machines share a network. The port (default 3100) is configurable in
+      Advanced Settings.</li>
+  <li><b>Black output but timers running</b> — the clip's codec isn't playable;
+      the output shows a “Cannot play” notice. Transcode to H.264.</li>
+</ul>
+</body>
+</html>
