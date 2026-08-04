@@ -40,9 +40,24 @@ the output.</p>
   <tr><td>Hold</td><td>Pause on the last frame (default)</td></tr>
   <tr><td>Black</td><td>Cut to black</td></tr>
   <tr><td>Play Next</td><td>Play the next clip in the list immediately</td></tr>
-  <tr><td>Loop</td><td>Loop the same clip</td></tr>
   <tr><td>Cue Next</td><td>Load the next clip paused on its first frame</td></tr>
 </table>
+<p>A clip with its <b>⟳ Loop</b> checkbox set (in the playlist) loops between
+its in and out points instead, whatever the end mode.</p>
+
+<h2>Trim, Rehearsal &amp; Levels</h2>
+<ul>
+  <li><b>In/out points:</b> play or scrub to the spot, press <kbd>I</kbd>
+      (Mark In) or <kbd>O</kbd> (Mark Out) — or use the buttons under the
+      transport. Timecodes, playlist totals and end-of-clip behavior follow
+      the trim; markers appear on the progress bar. <b>Clear</b> removes them.</li>
+  <li><b>Rehearsal jumps:</b> <b>Last 30 / 20 / 10</b> jump to that many
+      seconds before the clip's out point.</li>
+  <li><b>Audio:</b> master volume at the bottom right; each clip also has its
+      own level (select the clip, use the slider under the playlist).</li>
+  <li><b>Geometry:</b> aspect (Fit / Fill / Stretch / 16:9 / 4:3) and scale
+      apply to the output and the preview.</li>
+</ul>
 
 <h2>Default Hotkeys</h2>
 <table>
@@ -66,10 +81,12 @@ Program output / confidence monitor: <code>http://10.1.10.140:3100/output</code>
 then on.</p>
 
 <h2>Formats</h2>
-<p>PlayBack plays what the platform's media engine plays. H.264/AAC in
-<code>.mp4</code> or <code>.mov</code> is the safe bet everywhere; HEVC works on
-macOS. ProRes and other mezzanine codecs are not supported — transcode show
-files to H.264 for playback.</p>
+<p>PlayBack plays what the platform's media engine plays. On a Mac that is
+AVFoundation, so <b>ProRes .mov files play natively with hardware decode</b>,
+alongside H.264 and HEVC. H.264/AAC in <code>.mp4</code>/<code>.mov</code>
+(ideally with <code>faststart</code>) is the safe bet everywhere — it is also
+what web-remote previews in Chrome can render; ProRes shows only on the
+playback machine's own windows.</p>
 
 <h2>Troubleshooting</h2>
 <ul>

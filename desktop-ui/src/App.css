@@ -231,6 +231,25 @@ select {
   font-weight: 600;
 }
 
+.clip-loop {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: #888888;
+  font-size: 14px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.clip-loop input {
+  width: 14px;
+  height: 14px;
+  accent-color: #2f6fed;
+  cursor: pointer;
+}
+.clip-loop:has(input:checked) {
+  color: #4cd964;
+}
+
 .clip-duration {
   color: #aaaaaa;
   font-size: 13px;
@@ -239,6 +258,33 @@ select {
 }
 .clip-row.missing .clip-duration {
   color: #ff6b5e;
+}
+
+.clip-level-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 6px;
+  color: #cccccc;
+  font-size: 12px;
+}
+.clip-level-strip input[type="range"] {
+  flex: 1;
+}
+.clip-level-label {
+  max-width: 45%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+}
+.clip-level-label strong {
+  color: #66aaff;
+}
+.clip-level-value {
+  width: 38px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .playlist-toolbar {
@@ -294,11 +340,10 @@ select {
   border: 1px solid #555555;
   border-radius: 4px;
   overflow: hidden;
+  container-type: size;
+  display: flex;
 }
 .control-preview video {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
   display: block;
 }
 .preview-badge {
@@ -380,12 +425,27 @@ select {
 }
 
 .progress {
+  position: relative;
   height: 16px;
   border: 1px solid #666666;
   border-radius: 8px;
   overflow: hidden;
   cursor: pointer;
   background: #111111;
+}
+.progress-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  transform: translateX(-1px);
+  pointer-events: none;
+}
+.progress-mark.in {
+  background: #66aaff;
+}
+.progress-mark.out {
+  background: var(--alert);
 }
 .progress.disabled {
   cursor: default;
@@ -428,6 +488,49 @@ select {
 .transport-row.secondary .btn {
   font-size: 13px;
   padding: 5px 10px;
+}
+
+.transport-row.trim {
+  align-items: center;
+}
+.transport-row.trim .btn {
+  flex: none;
+  font-size: 12px;
+  padding: 5px 12px;
+}
+.trim-readout {
+  flex: 1;
+  text-align: right;
+  color: #cccccc;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Geometry --------------------------------------------------------------------- */
+
+.geometry-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 2px 6px;
+}
+.geometry-row select {
+  width: 96px;
+}
+.geometry-row input[type="range"] {
+  flex: 1;
+}
+.geometry-caption {
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+}
+.geometry-value {
+  color: #ffffff;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  width: 42px;
+  text-align: right;
 }
 
 /* End mode ------------------------------------------------------------------- */
@@ -637,6 +740,8 @@ select {
   height: 100vh;
   overflow: hidden;
   background: #000000;
+  container-type: size;
+  display: flex;
 }
 
 .output-waiting {
@@ -648,9 +753,6 @@ select {
 }
 
 .output-video {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
   display: block;
   background: #000000;
 }

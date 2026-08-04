@@ -24,9 +24,39 @@ pub struct Clip {
     pub duration_ms: Option<f64>,
     /// The file was gone when the playlist was loaded or refreshed.
     pub missing: bool,
+    /// Loop this clip when it ends, overriding the global end mode.
+    #[serde(rename = "loop", default)]
+    pub looping: bool,
+    /// Trim: playback starts here (Mark In).
+    #[serde(default)]
+    pub in_ms: f64,
+    /// Trim: playback ends here (Mark Out); None = play to the file's end.
+    #[serde(default)]
+    pub out_ms: Option<f64>,
+    /// Per-clip audio level, multiplied with the master volume.
+    #[serde(default = "default_gain")]
+    pub gain: f64,
 }
 
-/// What the output does when the playing clip reaches its end.
+fn default_gain() -> f64 {
+    1.0
+}
+
+impl Clip {
+    /// Effective end of the clip: the out point, else the probed duration,
+    /// else unknown (0 = "no end enforced yet").
+    pub fn out_effective(&self, file_duration_ms: f64) -> f64 {
+        self.out_ms.unwrap_or(if file_duration_ms > 0.0 {
+            file_duration_ms
+        } else {
+            self.duration_ms.unwrap_or(0.0)
+        })
+    }
+
+}
+
+/// What the output does when the playing clip reaches its end (a clip with
+/// its Loop checkbox set loops instead, regardless of this mode).
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum EndMode {
@@ -36,10 +66,38 @@ pub enum EndMode {
     Black,
     /// Play the next clip in the list immediately.
     Next,
-    /// Loop the same clip.
-    Loop,
     /// Load the next clip paused on its first frame.
     CueNext,
+}
+
+/// How the output maps video onto the screen.
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Aspect {
+    /// Letterbox/pillarbox to preserve the file's aspect (default).
+    Fit,
+    /// Fill the screen, cropping edges.
+    Fill,
+    /// Stretch to the screen's aspect.
+    Stretch,
+    /// Force a 16:9 frame, fitted to the screen.
+    R16x9,
+    /// Force a 4:3 frame, fitted to the screen.
+    R4x3,
+}
+
+/// Global output geometry correction.
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Geometry {
+    pub scale: f64,
+    pub aspect: Aspect,
+}
+
+impl Default for Geometry {
+    fn default() -> Self {
+        Self { scale: 1.0, aspect: Aspect::Fit }
+    }
 }
 
 /// Playback runtime. The output window's <video> element is the authority
@@ -100,10 +158,10 @@ impl TransportState {
         self.last = Some(now);
     }
 
-    fn load(&mut self, id: Option<String>, playing: bool) {
+    fn load(&mut self, id: Option<String>, playing: bool, start_ms: f64) {
         self.current = id;
         self.playing = playing && self.current.is_some();
-        self.position_ms = 0.0;
+        self.position_ms = start_ms.max(0.0);
         self.duration_ms = 0.0;
         self.load_seq += 1;
         self.last = Some(Instant::now());
@@ -204,8 +262,20 @@ pub struct Hotkeys {
     pub next_clip: Option<String>,
     pub jump_back: Option<String>,
     pub jump_fwd: Option<String>,
+    #[serde(default = "default_mark_in")]
+    pub mark_in: Option<String>,
+    #[serde(default = "default_mark_out")]
+    pub mark_out: Option<String>,
     pub launch_output: Option<String>,
     pub toggle_fullscreen: Option<String>,
+}
+
+fn default_mark_in() -> Option<String> {
+    Some("KeyI".into())
+}
+
+fn default_mark_out() -> Option<String> {
+    Some("KeyO".into())
 }
 
 impl Default for Hotkeys {
@@ -219,6 +289,8 @@ impl Default for Hotkeys {
             next_clip: Some("ArrowDown".into()),
             jump_back: Some("ArrowLeft".into()),
             jump_fwd: Some("ArrowRight".into()),
+            mark_in: default_mark_in(),
+            mark_out: default_mark_out(),
             launch_output: Some("KeyL".into()),
             toggle_fullscreen: Some("KeyF".into()),
         }
@@ -236,11 +308,13 @@ pub enum HotkeyAction {
     NextClip,
     JumpBack,
     JumpFwd,
+    MarkIn,
+    MarkOut,
     LaunchOutput,
     ToggleFullscreen,
 }
 
-pub const HOTKEY_ACTIONS: [HotkeyAction; 10] = [
+pub const HOTKEY_ACTIONS: [HotkeyAction; 12] = [
     HotkeyAction::Take,
     HotkeyAction::PlayPause,
     HotkeyAction::Kill,
@@ -249,6 +323,8 @@ pub const HOTKEY_ACTIONS: [HotkeyAction; 10] = [
     HotkeyAction::NextClip,
     HotkeyAction::JumpBack,
     HotkeyAction::JumpFwd,
+    HotkeyAction::MarkIn,
+    HotkeyAction::MarkOut,
     HotkeyAction::LaunchOutput,
     HotkeyAction::ToggleFullscreen,
 ];
@@ -264,6 +340,8 @@ impl Hotkeys {
             HotkeyAction::NextClip => &mut self.next_clip,
             HotkeyAction::JumpBack => &mut self.jump_back,
             HotkeyAction::JumpFwd => &mut self.jump_fwd,
+            HotkeyAction::MarkIn => &mut self.mark_in,
+            HotkeyAction::MarkOut => &mut self.mark_out,
             HotkeyAction::LaunchOutput => &mut self.launch_output,
             HotkeyAction::ToggleFullscreen => &mut self.toggle_fullscreen,
         }
@@ -296,6 +374,7 @@ pub struct AppState {
     /// The cued clip: what TAKE plays next. Independent of `transport.current`.
     pub selected: Option<String>,
     pub end_mode: EndMode,
+    pub geometry: Geometry,
     pub transport: TransportState,
     pub hotkeys: Hotkeys,
     /// Open the output window fullscreen as soon as it launches.
@@ -315,6 +394,7 @@ impl Default for AppState {
             clips: Vec::new(),
             selected: None,
             end_mode: EndMode::Hold,
+            geometry: Geometry::default(),
             transport: TransportState::default(),
             hotkeys: Hotkeys::default(),
             launch_fullscreen: false,
@@ -327,6 +407,15 @@ impl Default for AppState {
 }
 
 impl AppState {
+    fn clip(&self, id: &str) -> Option<&Clip> {
+        self.clips.iter().find(|c| c.id == id)
+    }
+
+    /// In point of a clip, for starting positions.
+    fn clip_in(&self, id: &str) -> f64 {
+        self.clip(id).map(|c| c.in_ms).unwrap_or(0.0)
+    }
+
     /// The clip after `id` in playlist order, skipping missing files.
     fn next_after(&self, id: &str) -> Option<String> {
         let i = self.clips.iter().position(|c| c.id == id)?;
@@ -358,6 +447,10 @@ impl AppState {
             name,
             duration_ms: None,
             missing,
+            looping: false,
+            in_ms: 0.0,
+            out_ms: None,
+            gain: 1.0,
         });
         if self.selected.is_none() && !missing {
             self.selected = Some(id);
@@ -387,6 +480,8 @@ struct Persisted {
     clips: Vec<Clip>,
     #[serde(default = "default_end_mode")]
     end_mode: EndMode,
+    #[serde(default)]
+    geometry: Geometry,
     #[serde(default)]
     hotkeys: Hotkeys,
     #[serde(default)]
@@ -430,6 +525,7 @@ pub fn save(app: &AppHandle) {
         Persisted {
             clips: st.clips.clone(),
             end_mode: st.end_mode,
+            geometry: st.geometry,
             hotkeys: st.hotkeys.clone(),
             launch_fullscreen: st.launch_fullscreen,
             selected_monitor: st.selected_monitor,
@@ -471,6 +567,8 @@ pub fn load(app: &AppHandle) {
     st.selected = p.clips.iter().find(|c| !c.missing).map(|c| c.id.clone());
     st.clips = p.clips;
     st.end_mode = p.end_mode;
+    st.geometry = p.geometry;
+    st.geometry.scale = st.geometry.scale.clamp(0.25, 2.0);
     st.hotkeys = p.hotkeys;
     st.launch_fullscreen = p.launch_fullscreen;
     st.selected_monitor = p.selected_monitor;
@@ -501,22 +599,32 @@ pub enum Command {
     SelectClip { id: String },
     SelectDelta { delta: i32 },
     SetClipDuration { id: String, duration_ms: f64 },
+    SetClipLoop { id: String, enabled: bool },
+    SetClipGain { id: String, gain: f64 },
     // Transport
     Take { id: Option<String> },
     PlayPause,
     Kill,
     Restart,
     Jump { delta_ms: f64 },
+    /// Seek to `offset_ms` before the clip's out point ("last 30/20/10").
+    JumpToEnd { offset_ms: f64 },
     Seek { ms: f64 },
+    MarkIn,
+    MarkOut,
+    ClearTrim,
     SetEndMode { mode: EndMode },
+    SetAspect { aspect: Aspect },
+    SetOutputScale { scale: f64 },
     SetVolume { volume: f64 },
     SetMuted { enabled: bool },
-    /// Progress report from the output window's <video> element.
+    /// Progress report from the output window's <video> element. Position
+    /// and duration only — play/pause intent belongs to the operator and is
+    /// never overwritten by reports.
     MediaStatus {
         load_seq: u64,
         position_ms: f64,
         duration_ms: f64,
-        playing: bool,
         ended: bool,
     },
     // Windows / settings
@@ -611,7 +719,7 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                             .map(|c| c.id.clone());
                     }
                     if st.transport.current.as_deref() == Some(id.as_str()) {
-                        st.transport.load(None, false);
+                        st.transport.load(None, false, 0.0);
                     }
                 }
             }
@@ -625,7 +733,7 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
             Command::ClearPlaylist => {
                 st.clips.clear();
                 st.selected = None;
-                st.transport.load(None, false);
+                st.transport.load(None, false, 0.0);
             }
             Command::SelectClip { id } => {
                 if st.clips.iter().any(|c| c.id == id) {
@@ -654,6 +762,18 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                     }
                 }
             }
+            Command::SetClipLoop { id, enabled } => {
+                if let Some(c) = st.clips.iter_mut().find(|c| c.id == id) {
+                    c.looping = enabled;
+                }
+            }
+            Command::SetClipGain { id, gain } => {
+                if let Some(c) = st.clips.iter_mut().find(|c| c.id == id) {
+                    if gain.is_finite() {
+                        c.gain = gain.clamp(0.0, 1.0);
+                    }
+                }
+            }
             Command::Take { id } => {
                 let target = id
                     .filter(|id| st.clips.iter().any(|c| c.id == *id && !c.missing))
@@ -664,7 +784,8 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                     })
                     .or_else(|| st.clips.iter().find(|c| !c.missing).map(|c| c.id.clone()));
                 if let Some(target) = target {
-                    st.transport.load(Some(target.clone()), true);
+                    let start = st.clip_in(&target);
+                    st.transport.load(Some(target.clone()), true, start);
                     if st.selected.as_deref() != Some(target.as_str()) {
                         st.selected = Some(target.clone());
                     }
@@ -682,12 +803,13 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                 persist = false;
             }
             Command::Kill => {
-                st.transport.load(None, false);
+                st.transport.load(None, false, 0.0);
                 persist = false;
             }
             Command::Restart => {
-                if st.transport.current.is_some() {
-                    st.transport.seek(0.0);
+                if let Some(id) = st.transport.current.clone() {
+                    let start = st.clip_in(&id);
+                    st.transport.seek(start);
                 }
                 persist = false;
             }
@@ -698,13 +820,65 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                 }
                 persist = false;
             }
+            Command::JumpToEnd { offset_ms } => {
+                if let Some(id) = st.transport.current.clone() {
+                    if offset_ms.is_finite() {
+                        let dur = st.transport.duration_ms;
+                        if let Some(c) = st.clip(&id) {
+                            let out = c.out_effective(dur);
+                            let target = (out - offset_ms.max(0.0)).max(c.in_ms);
+                            st.transport.seek(target);
+                        }
+                    }
+                }
+                persist = false;
+            }
             Command::Seek { ms } => {
                 if st.transport.current.is_some() && ms.is_finite() {
                     st.transport.seek(ms);
                 }
                 persist = false;
             }
+            Command::MarkIn => {
+                st.transport.rebase();
+                let pos = st.transport.position_ms;
+                if let Some(id) = st.transport.current.clone() {
+                    if let Some(c) = st.clips.iter_mut().find(|c| c.id == id) {
+                        c.in_ms = pos.max(0.0);
+                        // An in point at or past the out point voids the out.
+                        if c.out_ms.map(|o| o <= c.in_ms + 100.0).unwrap_or(false) {
+                            c.out_ms = None;
+                        }
+                    }
+                }
+            }
+            Command::MarkOut => {
+                st.transport.rebase();
+                let pos = st.transport.position_ms;
+                if let Some(id) = st.transport.current.clone() {
+                    if let Some(c) = st.clips.iter_mut().find(|c| c.id == id) {
+                        // Only accept an out point meaningfully after the in.
+                        if pos > c.in_ms + 100.0 {
+                            c.out_ms = Some(pos);
+                        }
+                    }
+                }
+            }
+            Command::ClearTrim => {
+                if let Some(id) = st.transport.current.clone() {
+                    if let Some(c) = st.clips.iter_mut().find(|c| c.id == id) {
+                        c.in_ms = 0.0;
+                        c.out_ms = None;
+                    }
+                }
+            }
             Command::SetEndMode { mode } => st.end_mode = mode,
+            Command::SetAspect { aspect } => st.geometry.aspect = aspect,
+            Command::SetOutputScale { scale } => {
+                if scale.is_finite() {
+                    st.geometry.scale = scale.clamp(0.25, 2.0);
+                }
+            }
             Command::SetVolume { volume } => {
                 if volume.is_finite() {
                     st.transport.volume = volume.clamp(0.0, 1.0);
@@ -715,11 +889,13 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                 load_seq,
                 position_ms,
                 duration_ms,
-                playing,
                 ended,
             } => {
                 // Stale reports from a previous load must not disturb the
-                // clip that replaced it.
+                // clip that replaced it. Reports rebase position/duration
+                // only — the element pausing to buffer or load must never
+                // cancel the operator's play intent (that caused v0.1's
+                // "keeps pausing itself" bug).
                 if load_seq == st.transport.load_seq && st.transport.current.is_some() {
                     if position_ms.is_finite() {
                         st.transport.position_ms = position_ms.max(0.0);
@@ -733,7 +909,6 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                             }
                         }
                     }
-                    st.transport.playing = playing && !ended;
                     st.transport.last = Some(Instant::now());
                     if ended {
                         apply_end_mode(&mut st);
@@ -824,41 +999,47 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
     broadcast(app);
 }
 
-/// What happens when the output reports the clip ended. Idempotent against
-/// the duplicate `ended` reports that arrive when both a native output and a
-/// web output are open.
+/// What happens when the output reports the clip ended (file end or out
+/// point). Idempotent against the duplicate `ended` reports that arrive
+/// when both a native output and a web output are open.
 fn apply_end_mode(st: &mut AppState) {
     let Some(current) = st.transport.current.clone() else { return };
+
+    // A looping clip loops between its in and out points, regardless of the
+    // global end mode.
+    if st.clip(&current).map(|c| c.looping).unwrap_or(false) {
+        let start = st.clip_in(&current);
+        st.transport.seek(start);
+        st.transport.playing = true;
+        return;
+    }
+
+    let hold_at_end = |t: &mut TransportState, out: f64| {
+        t.playing = false;
+        if out > 0.0 {
+            t.position_ms = out;
+        }
+    };
+    let out = st
+        .clip(&current)
+        .map(|c| c.out_effective(st.transport.duration_ms))
+        .unwrap_or(st.transport.duration_ms);
+
     match st.end_mode {
-        EndMode::Hold => {
-            st.transport.playing = false;
-            if st.transport.duration_ms > 0.0 {
-                st.transport.position_ms = st.transport.duration_ms;
-            }
-        }
-        EndMode::Black => {
-            st.transport.load(None, false);
-        }
-        EndMode::Loop => {
-            st.transport.seek(0.0);
-            st.transport.playing = true;
-        }
+        EndMode::Hold => hold_at_end(&mut st.transport, out),
+        EndMode::Black => st.transport.load(None, false, 0.0),
         EndMode::Next | EndMode::CueNext => {
             let play = st.end_mode == EndMode::Next;
             match st.next_after(&current) {
                 Some(next) => {
-                    st.transport.load(Some(next.clone()), play);
+                    let start = st.clip_in(&next);
+                    st.transport.load(Some(next.clone()), play, start);
                     if st.selected.as_deref() == Some(next.as_str()) {
                         st.selected = st.next_after(&next);
                     }
                 }
-                None => {
-                    // End of the list: hold the last frame.
-                    st.transport.playing = false;
-                    if st.transport.duration_ms > 0.0 {
-                        st.transport.position_ms = st.transport.duration_ms;
-                    }
-                }
+                // End of the list: hold the last frame.
+                None => hold_at_end(&mut st.transport, out),
             }
         }
     }

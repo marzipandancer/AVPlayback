@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { clipDurationLabel, formatTime, mediaUrl } from "../format";
+import {
+  clipDurationLabel,
+  clipOut,
+  clipRuntimeMs,
+  formatTime,
+  isTrimmed,
+  mediaUrl,
+  videoGeometryStyle,
+} from "../format";
 import { comboFromEvent, comboLabel } from "../hotkeys";
 import { positionNow, useTicker, type Snapshot, type Store } from "../store";
 import { isTauri } from "../transport";
 import type {
   AppState,
+  Aspect,
   Clip,
   Command,
   EndMode,
@@ -80,6 +89,10 @@ export function ControlView({ store }: { store: Store }) {
           ? { type: "jump", payload: { deltaMs: -10000 } }
           : combo === hk.jumpFwd
           ? { type: "jump", payload: { deltaMs: 10000 } }
+          : combo === hk.markIn
+          ? { type: "markIn" }
+          : combo === hk.markOut
+          ? { type: "markOut" }
           : combo === hk.launchOutput
           ? { type: "launchOutput" }
           : combo === hk.toggleFullscreen
@@ -155,6 +168,7 @@ export function ControlView({ store }: { store: Store }) {
                 <NowPlayingSection snap={snap} send={send} />
                 <TransportSection snap={snap} send={send} />
                 <EndModeSection state={state} send={send} />
+                <GeometrySection state={state} send={send} />
                 <VolumeSection state={state} send={send} />
               </>
             )}
@@ -223,9 +237,9 @@ function SectionBar({ children }: { children: React.ReactNode }) {
 // Playlist
 // ---------------------------------------------------------------------------
 
-/** Sum of the known durations of a set of clips. */
+/** Sum of the as-played (trimmed) runtimes of a set of clips. */
 const totalMs = (clips: Clip[]) =>
-  clips.reduce((sum, c) => sum + (c.missing ? 0 : c.durationMs ?? 0), 0);
+  clips.reduce((sum, c) => sum + clipRuntimeMs(c), 0);
 
 /**
  * Time left in the show if it plays through: the rest of the current clip
@@ -239,10 +253,11 @@ function remainingMs(snap: Snapshot): number {
   if (i < 0) return totalMs(clips);
   const rest = totalMs(clips.slice(i + 1));
   if (transport.current) {
-    const left = Math.max(0, transport.durationMs - positionNow(snap));
+    const out = clipOut(clips[i], transport.durationMs);
+    const left = Math.max(0, out - positionNow(snap));
     return left + rest;
   }
-  return totalMs([clips[i]]) + rest;
+  return clipRuntimeMs(clips[i]) + rest;
 }
 
 function PlaylistSection({
@@ -312,11 +327,42 @@ function PlaylistSection({
                 {isCurrent ? (transport.playing ? "▶" : "❚❚") : isSelected ? "●" : ""}
               </span>
               <span className="clip-name">{clip.name}</span>
-              <span className="clip-duration">{clipDurationLabel(clip)}</span>
+              <label
+                className="clip-loop"
+                title="Loop this clip when it ends (overrides the end mode)"
+                onClick={(e) => e.stopPropagation()}
+                onDoubleClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  checked={clip.loop}
+                  onChange={(e) =>
+                    send({
+                      type: "setClipLoop",
+                      payload: { id: clip.id, enabled: e.target.checked },
+                    })
+                  }
+                />
+                ⟳
+              </label>
+              <span
+                className="clip-duration"
+                title={
+                  isTrimmed(clip)
+                    ? `Trimmed: in ${formatTime(clip.inMs)} · out ${
+                        clip.outMs !== null ? formatTime(clip.outMs) : "end"
+                      }`
+                    : undefined
+                }
+              >
+                {clipDurationLabel(clip)}
+              </span>
             </div>
           );
         })}
       </div>
+
+      <ClipLevelStrip state={state} send={send} />
 
       <div className="playlist-toolbar">
         <button
@@ -372,6 +418,40 @@ function PlaylistSection({
 }
 
 /**
+ * Audio level for the highlighted clip, multiplied with the master volume
+ * on the output. Lives with the playlist so a clip can be trimmed to level
+ * while another one plays.
+ */
+function ClipLevelStrip({ state, send }: { state: AppState; send: Send }) {
+  const clip = state.selected
+    ? state.clips.find((c) => c.id === state.selected) ?? null
+    : null;
+  if (!clip) return null;
+  return (
+    <div className="clip-level-strip">
+      <span className="clip-level-label" title="Audio level for the highlighted clip">
+        Clip audio · <strong>{clip.name}</strong>
+      </span>
+      <input
+        type="range"
+        min={0}
+        max={1}
+        step={0.02}
+        value={clip.gain}
+        title={`Audio level for “${clip.name}” (× master volume)`}
+        onChange={(e) =>
+          send({
+            type: "setClipGain",
+            payload: { id: clip.id, gain: Number(e.target.value) },
+          })
+        }
+      />
+      <span className="clip-level-value">{Math.round(clip.gain * 100)}%</span>
+    </div>
+  );
+}
+
+/**
  * Invisible probe that fills in playlist durations one clip at a time, by
  * loading each unprobed file's metadata from the media server. Runs only in
  * the native control window so web remotes don't pull media over the LAN.
@@ -408,20 +488,27 @@ function NowPlayingSection({ snap, send }: { snap: Snapshot; send: Send }) {
     ? state.clips.find((c) => c.id === t.current) ?? null
     : null;
   const pos = positionNow(snap);
-  const remaining = Math.max(0, t.durationMs - pos);
+  // All show timecodes are trim-aware: elapsed/remaining/duration describe
+  // the in→out range, not the raw file.
+  const inMs = clip?.inMs ?? 0;
+  const out = clip ? clipOut(clip, t.durationMs) : 0;
+  const durEff = Math.max(0, out - inMs);
+  const elapsed = Math.min(Math.max(0, pos - inMs), durEff);
+  const remaining = Math.min(Math.max(0, out - pos), durEff);
   const frac = t.durationMs > 0 ? Math.min(1, pos / t.durationMs) : 0;
+  const ready = !!clip && out > 0;
 
   const status = !clip
     ? "BLACK"
     : t.playing
     ? "PLAYING"
-    : pos <= 0
+    : pos <= inMs
     ? "CUED"
     : "PAUSED";
 
   // PlaybackPro-style urgency: amber inside 30s, flashing red inside 10s.
   const urgency =
-    clip && t.playing && t.durationMs > 0
+    clip && t.playing && ready
       ? remaining <= 10000
         ? " flash-red"
         : remaining <= 30000
@@ -445,23 +532,23 @@ function NowPlayingSection({ snap, send }: { snap: Snapshot; send: Send }) {
       <div className="timecodes">
         <div className="timecode-group">
           <span className="timecode-caption">Elapsed</span>
-          <span className="timecode" title="Time into the current clip">
-            {clip ? formatTime(pos) : "--:--"}
+          <span className="timecode" title="Time since the clip's in point">
+            {ready ? formatTime(elapsed) : "--:--"}
           </span>
         </div>
         <div className="timecode-group">
           <span className="timecode-caption">Remaining</span>
           <span
             className={"timecode timecode-remaining" + urgency}
-            title="Time left in the current clip"
+            title="Time left until the clip's out point"
           >
-            {clip && t.durationMs > 0 ? formatTime(remaining) : "--:--"}
+            {ready ? formatTime(remaining) : "--:--"}
           </span>
         </div>
         <div className="timecode-group">
           <span className="timecode-caption">Duration</span>
-          <span className="timecode" title="Total length of the current clip">
-            {clip && t.durationMs > 0 ? formatTime(t.durationMs) : "--:--"}
+          <span className="timecode" title="As-played length (in point to out point)">
+            {ready ? formatTime(durEff) : "--:--"}
           </span>
         </div>
       </div>
@@ -476,6 +563,20 @@ function NowPlayingSection({ snap, send }: { snap: Snapshot; send: Send }) {
         }}
       >
         <div className="progress-fill" style={{ width: `${frac * 100}%` }} />
+        {clip && t.durationMs > 0 && inMs > 0 && (
+          <div
+            className="progress-mark in"
+            title={`In point ${formatTime(inMs)}`}
+            style={{ left: `${(inMs / t.durationMs) * 100}%` }}
+          />
+        )}
+        {clip && t.durationMs > 0 && clip.outMs !== null && (
+          <div
+            className="progress-mark out"
+            title={`Out point ${formatTime(clip.outMs)}`}
+            style={{ left: `${Math.min(100, (clip.outMs / t.durationMs) * 100)}%` }}
+          />
+        )}
       </div>
     </>
   );
@@ -508,7 +609,14 @@ function ControlPreview({ snap }: { snap: Snapshot }) {
   return (
     <div className="control-preview" title="Muted preview of the program output">
       {src && (
-        <video ref={videoRef} src={src} muted playsInline preload="auto" />
+        <video
+          ref={videoRef}
+          src={src}
+          style={videoGeometryStyle(state.geometry)}
+          muted
+          playsInline
+          preload="auto"
+        />
       )}
       <span className="preview-badge">PREVIEW</span>
     </div>
@@ -562,29 +670,74 @@ function TransportSection({ snap, send }: { snap: Snapshot; send: Send }) {
         <button
           className="btn gray"
           disabled={!t.current}
-          title="Jump back to the top of the current clip (R)"
+          title="Jump back to the clip's in point (R)"
           onClick={() => send({ type: "restart" })}
         >
           ⟲ Restart
         </button>
-        <button
-          className="btn gray"
-          disabled={!t.current}
-          title="Jump 10 seconds back (←)"
-          onClick={() => send({ type: "jump", payload: { deltaMs: -10000 } })}
-        >
-          −10s
-        </button>
-        <button
-          className="btn gray"
-          disabled={!t.current}
-          title="Jump 10 seconds forward (→)"
-          onClick={() => send({ type: "jump", payload: { deltaMs: 10000 } })}
-        >
-          +10s
-        </button>
+        {[30, 20, 10].map((s) => (
+          <button
+            key={s}
+            className="btn gray"
+            disabled={!t.current}
+            title={`Jump to the last ${s} seconds of the clip — rehearse the ending`}
+            onClick={() =>
+              send({ type: "jumpToEnd", payload: { offsetMs: s * 1000 } })
+            }
+          >
+            Last {s}
+          </button>
+        ))}
       </div>
+      <TrimRow snap={snap} send={send} />
     </>
+  );
+}
+
+/**
+ * In/out points for the loaded clip: play or scrub to the spot, hit Mark In
+ * (I) / Mark Out (O). Timecodes, playlist totals and the end-of-clip switch
+ * all follow the trim.
+ */
+function TrimRow({ snap, send }: { snap: Snapshot; send: Send }) {
+  const t = snap.state.transport;
+  const clip = t.current
+    ? snap.state.clips.find((c) => c.id === t.current) ?? null
+    : null;
+  return (
+    <div className="transport-row trim">
+      <button
+        className="btn gray"
+        disabled={!clip}
+        title="Set the clip's in point to the current position (I)"
+        onClick={() => send({ type: "markIn" })}
+      >
+        Mark In
+      </button>
+      <button
+        className="btn gray"
+        disabled={!clip}
+        title="Set the clip's out point to the current position (O)"
+        onClick={() => send({ type: "markOut" })}
+      >
+        Mark Out
+      </button>
+      <button
+        className="btn gray"
+        disabled={!clip || !isTrimmed(clip)}
+        title="Remove the clip's in and out points"
+        onClick={() => send({ type: "clearTrim" })}
+      >
+        Clear
+      </button>
+      <span className="trim-readout" title="In and out points of the loaded clip">
+        {clip
+          ? `In ${formatTime(clip.inMs)} · Out ${
+              clip.outMs !== null ? formatTime(clip.outMs) : "end"
+            }`
+          : "In —:—— · Out —:——"}
+      </span>
+    </div>
   );
 }
 
@@ -596,14 +749,16 @@ const END_MODES: { mode: EndMode; label: string; title: string }[] = [
   { mode: "hold", label: "Hold", title: "Pause on the last frame of the clip" },
   { mode: "black", label: "Black", title: "Cut to black when the clip ends" },
   { mode: "next", label: "Play Next", title: "Play the next clip in the list immediately" },
-  { mode: "loop", label: "Loop", title: "Loop the same clip until you intervene" },
   { mode: "cueNext", label: "Cue Next", title: "Load the next clip paused on its first frame" },
 ];
 
 function EndModeSection({ state, send }: { state: AppState; send: Send }) {
   return (
     <>
-      <SectionBar>When A Clip Ends</SectionBar>
+      <SectionBar>
+        When A Clip Ends
+        <span className="bar-note">clips with ⟳ loop instead</span>
+      </SectionBar>
       <div className="endmode-row">
         {END_MODES.map(({ mode, label, title }) => (
           <button
@@ -623,6 +778,75 @@ function EndModeSection({ state, send }: { state: AppState; send: Send }) {
 }
 
 // ---------------------------------------------------------------------------
+// Output geometry
+// ---------------------------------------------------------------------------
+
+const ASPECTS: { aspect: Aspect; label: string; title: string }[] = [
+  { aspect: "fit", label: "Fit", title: "Letterbox/pillarbox, preserving the file's aspect (default)" },
+  { aspect: "fill", label: "Fill", title: "Fill the screen, cropping edges" },
+  { aspect: "stretch", label: "Stretch", title: "Stretch to the screen's aspect" },
+  { aspect: "r16x9", label: "16:9", title: "Force a 16:9 frame, fitted to the screen" },
+  { aspect: "r4x3", label: "4:3", title: "Force a 4:3 frame, fitted to the screen" },
+];
+
+function GeometrySection({ state, send }: { state: AppState; send: Send }) {
+  const g = state.geometry;
+  return (
+    <>
+      <SectionBar>
+        Output Geometry
+        <span className="bar-note">applies to output and preview</span>
+      </SectionBar>
+      <div className="geometry-row">
+        <select
+          value={g.aspect}
+          title="How video is mapped onto the output screen"
+          onChange={(e) =>
+            send({
+              type: "setAspect",
+              payload: { aspect: e.target.value as Aspect },
+            })
+          }
+        >
+          {ASPECTS.map((a) => (
+            <option key={a.aspect} value={a.aspect} title={a.title}>
+              {a.label}
+            </option>
+          ))}
+        </select>
+        <span className="geometry-caption">Scale</span>
+        <input
+          type="range"
+          min={0.25}
+          max={2}
+          step={0.05}
+          value={g.scale}
+          title="Scale the video on the output screen"
+          onChange={(e) =>
+            send({
+              type: "setOutputScale",
+              payload: { scale: Number(e.target.value) },
+            })
+          }
+        />
+        <span className="geometry-value">{Math.round(g.scale * 100)}%</span>
+        <button
+          className="btn gray"
+          disabled={g.scale === 1 && g.aspect === "fit"}
+          title="Reset geometry to Fit at 100%"
+          onClick={() => {
+            send({ type: "setOutputScale", payload: { scale: 1 } });
+            send({ type: "setAspect", payload: { aspect: "fit" } });
+          }}
+        >
+          Reset
+        </button>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Volume
 // ---------------------------------------------------------------------------
 
@@ -630,7 +854,7 @@ function VolumeSection({ state, send }: { state: AppState; send: Send }) {
   const t = state.transport;
   return (
     <div className="volume-row">
-      <span className="volume-caption">Volume</span>
+      <span className="volume-caption">Master Volume</span>
       <input
         type="range"
         min={0}
@@ -667,6 +891,8 @@ const HOTKEY_ROWS: { action: HotkeyAction; label: string }[] = [
   { action: "nextClip", label: "Cue Next Clip" },
   { action: "jumpBack", label: "Jump Back 10s" },
   { action: "jumpFwd", label: "Jump Forward 10s" },
+  { action: "markIn", label: "Mark In Point" },
+  { action: "markOut", label: "Mark Out Point" },
   { action: "launchOutput", label: "Launch Output" },
   { action: "toggleFullscreen", label: "Toggle Fullscreen" },
 ];

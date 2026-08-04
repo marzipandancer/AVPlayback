@@ -47,8 +47,22 @@ server makes both views available to any browser on the network.
 ## Codecs
 
 Playback uses the OS media engine (WKWebView on macOS, WebView2 on
-Windows, WebKitGTK on Linux): H.264/AAC plays everywhere, HEVC on
-macOS/Windows where licensed. ProRes and friends need a transcode pass.
+Windows, WebKitGTK on Linux). On macOS that's AVFoundation, so **ProRes
+.mov files play natively with hardware decode** (verified with ProRes HQ
+1080p), alongside H.264/HEVC. H.264/AAC is the cross-platform safe bet —
+it's also what web-remote previews (Chrome) can show; ProRes previews
+render only in the native windows. Prefer `-movflags +faststart` files.
+
+## Show features
+
+- Per-clip **loop** checkbox in the playlist (overrides the end mode).
+- Per-clip **in/out trim**: play or scrub to the spot, Mark In (I) /
+  Mark Out (O). Timecodes, totals and end-of-clip behavior follow the
+  trim; markers show on the progress bar.
+- **Rehearsal jumps**: Last 30 / Last 20 / Last 10 seconds of the clip.
+- Per-clip **audio level** × master volume.
+- **Output geometry**: Fit / Fill / Stretch / forced 16:9 / forced 4:3,
+  plus 25–200% scale — applied to the output and the control preview.
 
 ## Development
 

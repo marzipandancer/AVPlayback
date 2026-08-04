@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { mediaUrl } from "../format";
+import { mediaUrl, videoGeometryStyle } from "../format";
 import { type Store } from "../store";
 import { isTauri } from "../transport";
 
 /**
  * Full-screen program output: the native output window and the /output web
- * page both render this. The <video> element here is the authority for
- * position/duration — it obeys the transport intent from state (load, seek,
- * play/pause) and reports progress back with mediaStatus commands.
+ * page both render this. The <video> element here is the media clock — it
+ * obeys transport intent from state (load, seek, play/pause) and reports
+ * position/duration back with mediaStatus commands. It never reports play
+ * state: intent belongs to the operator, and a buffering or still-loading
+ * element must not cancel it.
  */
 export function OutputView({ store }: { store: Store }) {
   const { snap, connected, send } = store;
@@ -20,10 +22,12 @@ export function OutputView({ store }: { store: Store }) {
     snap && t?.current
       ? snap.state.clips.find((c) => c.id === t.current) ?? null
       : null;
-  // loadSeq in the URL makes re-taking the same clip a fresh load from 0:00.
+  // loadSeq in the URL makes re-taking the same clip a fresh load.
   const src = snap && t && clip ? mediaUrl(snap.state, clip.id, t.loadSeq) : null;
   const playing = (t?.playing ?? false) && !!src;
   const seekSeq = t?.seekSeq ?? 0;
+  const inMs = clip?.inMs ?? 0;
+  const outMs = clip && t ? clip.outMs ?? 0 : 0; // 0 = no out point enforced
 
   // Report the element's real position/duration back to the state core. The
   // loadSeq tag lets the reducer drop reports that raced a clip change.
@@ -38,7 +42,6 @@ export function OutputView({ store }: { store: Store }) {
         loadSeq: loadSeqRef.current,
         positionMs: v.currentTime * 1000,
         durationMs: Number.isFinite(v.duration) ? v.duration * 1000 : 0,
-        playing: !v.paused && !v.ended,
         ended,
       },
     });
@@ -52,7 +55,7 @@ export function OutputView({ store }: { store: Store }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src]);
 
-  // Commanded seeks (restart, ±10s, progress-bar clicks, loop).
+  // Commanded seeks (restart, rehearsal jumps, progress-bar clicks, loop).
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !t || !src) return;
@@ -63,8 +66,8 @@ export function OutputView({ store }: { store: Store }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seekSeq, src]);
 
-  // Play/pause intent. seekSeq is a dependency so a loop restart (seek to 0
-  // while "playing") starts the ended element again.
+  // Play/pause intent. seekSeq is a dependency so a loop restart (seek to
+  // the in point while "playing") starts the ended element again.
   useEffect(() => {
     const v = videoRef.current;
     if (!v || !src) return;
@@ -77,18 +80,25 @@ export function OutputView({ store }: { store: Store }) {
     }
   }, [playing, src, seekSeq]);
 
+  // Master volume × per-clip gain.
+  const gain = clip?.gain ?? 1;
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    v.volume = t?.volume ?? 1;
+    v.volume = (t?.volume ?? 1) * gain;
     v.muted = t?.muted ?? false;
-  }, [t?.volume, t?.muted, src]);
+  }, [t?.volume, t?.muted, gain, src]);
 
   // Periodic progress reports; extrapolation on the other views corrects
-  // itself against these, so a modest rate is plenty.
+  // itself against these. Doubles as self-healing: if intent is "playing"
+  // but the element fell paused (autoplay unblock, buffering), poke it.
   useEffect(() => {
     if (!src || !playing) return;
-    const id = setInterval(() => report(false), 500);
+    const id = setInterval(() => {
+      const v = videoRef.current;
+      if (v && v.paused && !v.ended) v.play().catch(() => {});
+      report(false);
+    }, 500);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src, playing]);
@@ -109,10 +119,26 @@ export function OutputView({ store }: { store: Store }) {
         <video
           ref={videoRef}
           className="output-video"
+          style={videoGeometryStyle(snap.state.geometry)}
           src={src}
           preload="auto"
           playsInline
-          onLoadedMetadata={() => report(false)}
+          onLoadedMetadata={() => {
+            // Fresh loads start at the clip's in point.
+            const v = videoRef.current;
+            if (v && inMs > 0 && v.currentTime * 1000 < inMs) {
+              v.currentTime = inMs / 1000;
+            }
+            report(false);
+          }}
+          onTimeUpdate={() => {
+            // Out-point enforcement: reaching it counts as the clip ending.
+            const v = videoRef.current;
+            if (v && !v.paused && outMs > 0 && v.currentTime * 1000 >= outMs) {
+              v.pause();
+              report(true);
+            }
+          }}
           onPlay={() => report(false)}
           onPause={() => {
             const v = videoRef.current;
