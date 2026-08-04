@@ -1,13 +1,14 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        Path, Request, State,
+        Path, Query, Request, State,
     },
     http::{header, StatusCode, Uri},
     response::IntoResponse,
     routing::get,
     Router,
 };
+use std::collections::HashMap;
 use futures_util::{SinkExt, StreamExt};
 use rust_embed::RustEmbed;
 use tauri::{AppHandle, Manager};
@@ -157,11 +158,18 @@ async fn help_handler(State(app): State<AppHandle>) -> impl IntoResponse {
 // WebSocket sync
 // ---------------------------------------------------------------------------
 
-async fn ws_handler(ws: WebSocketUpgrade, State(app): State<AppHandle>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, app))
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    Query(params): Query<HashMap<String, String>>,
+    State(app): State<AppHandle>,
+) -> impl IntoResponse {
+    // A main deck connects with ?role=sync; commands it mirrors here are
+    // applied but never re-forwarded (see dispatch_ext).
+    let from_sync = params.get("role").map(|r| r == "sync").unwrap_or(false);
+    ws.on_upgrade(move |socket| handle_socket(socket, app, from_sync))
 }
 
-async fn handle_socket(socket: WebSocket, app: AppHandle) {
+async fn handle_socket(socket: WebSocket, app: AppHandle, from_sync: bool) {
     let mut rx = app.state::<Shared>().tx.subscribe();
     let (mut sender, mut receiver) = socket.split();
 
@@ -193,7 +201,7 @@ async fn handle_socket(socket: WebSocket, app: AppHandle) {
                             // Dispatch does blocking work (persistence, window
                             // ops); keep it off this reactor thread.
                             tauri::async_runtime::spawn_blocking(move || {
-                                state::dispatch(&app, cmd);
+                                state::dispatch_ext(&app, cmd, from_sync);
                             });
                         }
                     }

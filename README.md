@@ -53,6 +53,28 @@ Windows, WebKitGTK on Linux). On macOS that's AVFoundation, so **ProRes
 it's also what web-remote previews (Chrome) can show; ProRes previews
 render only in the native windows. Prefer `-movflags +faststart` files.
 
+## External control
+
+PlayBack answers DT Videolabs PlaybackPro Plus's published network
+protocol on **TCP 4647** and **UDP 7000** (raw ASCII commands, no
+terminators): `TA` `KL` `OP` `PA` `PL` `PR` `NX` `CL` `GO<n>` `GT<n>`
+`10/20/30` `OI` `OO` `O-` `O+` `OR` `OF` `ES` `EE` `LT` `SL` `EL`.
+Bitfocus Companion's stock *"DT Videolabs PlaybackPro Plus"* module
+drives it unmodified — add the connection, enter the deck's IP, choose
+TCP or UDP. Unsupported PlaybackPro commands are accepted and ignored.
+The full JSON command set is also scriptable over `/ws` (see
+`desktop-ui/src/types.ts` for the schema).
+
+## Backup sync (built-in Simple Sync)
+
+Decks discover each other via UDP beacons (port 3101). The main deck's
+**Backup Sync** dropdown picks a follower; every show command then
+mirrors to it over a websocket, addressed by playlist index so clip ids
+never need to match — load the same clips in the same order on both
+decks. Followers never re-forward, so decks can't loop. Dev overrides
+for running two instances on one machine: `PLAYBACK_PORT` and
+`PLAYBACK_STATE`.
+
 ## Show features
 
 - Per-clip **loop** checkbox in the playlist (overrides the end mode).

@@ -167,6 +167,7 @@ export function ControlView({ store }: { store: Store }) {
                 ⚙
               </button>
             </div>
+            <SyncRow state={state} send={send} />
             {advancedOpen ? (
               <AdvancedSettings
                 state={state}
@@ -242,6 +243,65 @@ export function ControlView({ store }: { store: Store }) {
 
 function SectionBar({ children }: { children: React.ReactNode }) {
   return <div className="section-bar">{children}</div>;
+}
+
+// ---------------------------------------------------------------------------
+// Backup sync (built-in Simple Sync)
+// ---------------------------------------------------------------------------
+
+/**
+ * Always-on main/backup pairing: pick another PlayBack deck seen on the
+ * network and every show command (take, kill, pause, seeks, cueing — by
+ * playlist position) mirrors to it, so main and backup sync-roll.
+ */
+function SyncRow({ state, send }: { state: AppState; send: Send }) {
+  const s = state.sync;
+  const followerKnown = !s.follower || s.peers.some((p) => p.addr === s.follower);
+  return (
+    <div className="sync-row">
+      <span
+        className="sync-label"
+        title="Mirror every show command to a backup PlayBack deck on the network (built-in Simple Sync). Load the same playlist on both decks."
+      >
+        Backup Sync
+      </span>
+      <select
+        value={s.follower ?? ""}
+        title="PlayBack decks discovered on the network"
+        onChange={(e) =>
+          send({
+            type: "setFollower",
+            payload: { target: e.target.value || null },
+          })
+        }
+      >
+        <option value="">None (solo)</option>
+        {s.peers.map((p) => (
+          <option key={p.addr} value={p.addr}>
+            {p.name} ({p.addr})
+          </option>
+        ))}
+        {!followerKnown && (
+          <option value={s.follower!}>{s.follower} (not seen)</option>
+        )}
+      </select>
+      <span
+        className={
+          "sync-dot" + (s.linked ? " linked" : s.follower ? " searching" : "")
+        }
+        title={
+          s.linked
+            ? "Backup linked — commands mirror to it"
+            : s.follower
+            ? "Trying to reach the backup deck…"
+            : "No backup selected"
+        }
+      />
+      <span className="sync-status">
+        {s.linked ? "sync-rolling" : s.follower ? "connecting…" : ""}
+      </span>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------

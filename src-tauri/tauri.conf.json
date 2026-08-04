@@ -26,10 +26,11 @@
       {
         "label": "control",
         "title": "PlayBack — Control",
-        "width": 1210,
-        "height": 840,
+        "width": 1400,
+        "height": 1000,
         "minWidth": 1080,
-        "minHeight": 720,
+        "minHeight": 800,
+        "maximized": true,
         "resizable": true,
         "fileDropEnabled": true
       }

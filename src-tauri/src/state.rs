@@ -236,6 +236,34 @@ impl Network {
     }
 }
 
+/// Another PlayBack instance seen on the network (via sync beacons).
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Peer {
+    pub name: String,
+    /// "ip:port" of the peer's built-in server.
+    pub addr: String,
+    /// Beacon instance id — one instance beacons on several interfaces, so
+    /// peers dedupe on this rather than on the address.
+    #[serde(skip)]
+    pub id: u64,
+    #[serde(skip, default = "Instant::now")]
+    pub last_seen: Instant,
+}
+
+/// Built-in Simple Sync: a main deck mirrors its show commands to one
+/// selected backup deck, which sync-rolls its own copy of the media.
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncState {
+    /// Peers currently beaconing on the LAN.
+    pub peers: Vec<Peer>,
+    /// The backup deck ("ip:port") selected to follow this one, if any.
+    pub follower: Option<String>,
+    /// Live connection to the follower is up.
+    pub linked: bool,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitorInfo {
@@ -382,6 +410,7 @@ pub struct AppState {
     pub network: Network,
     pub monitors: Vec<MonitorInfo>,
     pub selected_monitor: Option<usize>,
+    pub sync: SyncState,
     #[serde(skip)]
     pub next_clip_id: u64,
 }
@@ -401,6 +430,7 @@ impl Default for AppState {
             network: Network::default(),
             monitors: Vec::new(),
             selected_monitor: None,
+            sync: SyncState::default(),
             next_clip_id: 1,
         }
     }
@@ -493,6 +523,8 @@ struct Persisted {
     volume: f64,
     #[serde(default)]
     muted: bool,
+    #[serde(default)]
+    follower: Option<String>,
 }
 
 fn default_end_mode() -> EndMode {
@@ -504,6 +536,10 @@ fn default_volume() -> f64 {
 }
 
 fn persist_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    // Dev/test override so a second instance can run against its own state.
+    if let Ok(p) = std::env::var("PLAYBACK_STATE") {
+        return Some(std::path::PathBuf::from(p));
+    }
     let dir = app.path_resolver().app_config_dir()?;
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir.join("state.json"))
@@ -533,6 +569,7 @@ pub fn save(app: &AppHandle) {
             iface: st.network.iface.clone(),
             volume: st.transport.volume,
             muted: st.transport.muted,
+            follower: st.sync.follower.clone(),
         }
     };
     if let Some(path) = persist_path(app) {
@@ -576,6 +613,20 @@ pub fn load(app: &AppHandle) {
     st.network.iface = p.iface;
     st.transport.volume = p.volume.clamp(0.0, 1.0);
     st.transport.muted = p.muted;
+    st.sync.follower = p.follower.filter(|f| f.parse::<std::net::SocketAddr>().is_ok());
+}
+
+/// Dev/test override so a second instance can bind its own server port.
+/// Applied after load so it works with or without a persisted state file.
+pub fn apply_env_overrides(app: &AppHandle) {
+    if let Ok(port) = std::env::var("PLAYBACK_PORT") {
+        if let Ok(port) = port.parse::<u16>() {
+            let shared = app.state::<Shared>();
+            let mut st = shared.state.lock().unwrap();
+            st.network.port = port;
+            st.network.rebuild_urls();
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -598,11 +649,17 @@ pub enum Command {
     ClearPlaylist,
     SelectClip { id: String },
     SelectDelta { delta: i32 },
+    /// Cue by playlist position (0-based). Used by external control and by
+    /// sync forwarding, where clip ids differ between decks.
+    SelectIndex { index: usize },
+    ClearSelection,
     SetClipDuration { id: String, duration_ms: f64 },
     SetClipLoop { id: String, enabled: bool },
     SetClipGain { id: String, gain: f64 },
     // Transport
     Take { id: Option<String> },
+    /// Take by playlist position (0-based); external control and sync.
+    TakeIndex { index: usize },
     PlayPause,
     Kill,
     Restart,
@@ -629,6 +686,8 @@ pub enum Command {
         #[serde(default)]
         native: bool,
     },
+    /// Choose (or clear) the backup deck this one mirrors commands to.
+    SetFollower { target: Option<String> },
     // Windows / settings
     SetHotkey { action: HotkeyAction, binding: Option<String> },
     SetLaunchFullscreen { enabled: bool },
@@ -650,6 +709,10 @@ pub struct Shared {
     pub state: Mutex<AppState>,
     pub tx: broadcast::Sender<String>,
     pub server: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// Live channel to the follower deck's websocket, when linked.
+    pub sync_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
+    /// The follower-client task, so reselecting a backup can replace it.
+    pub sync_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
 }
 
 impl Shared {
@@ -659,6 +722,8 @@ impl Shared {
             state: Mutex::new(AppState::default()),
             tx,
             server: Mutex::new(None),
+            sync_tx: Mutex::new(None),
+            sync_task: Mutex::new(None),
         }
     }
 }
@@ -683,14 +748,43 @@ pub fn broadcast(app: &AppHandle) {
 // ---------------------------------------------------------------------------
 
 pub fn dispatch(app: &AppHandle, cmd: Command) {
+    dispatch_ext(app, cmd, false);
+}
+
+/// Resolve and execute a take. Returns the playlist index of the clip that
+/// went to program, for sync forwarding.
+fn do_take(st: &mut AppState, requested: Option<String>) -> Option<usize> {
+    let target = requested
+        .filter(|id| st.clips.iter().any(|c| c.id == *id && !c.missing))
+        .or_else(|| {
+            st.selected
+                .clone()
+                .filter(|id| st.clips.iter().any(|c| c.id == *id && !c.missing))
+        })
+        .or_else(|| st.clips.iter().find(|c| !c.missing).map(|c| c.id.clone()))?;
+    let start = st.clip_in(&target);
+    st.transport.load(Some(target.clone()), true, start);
+    if st.selected.as_deref() != Some(target.as_str()) {
+        st.selected = Some(target.clone());
+    }
+    st.advance_selection(&target);
+    st.clips.iter().position(|c| c.id == target)
+}
+
+/// `from_sync` marks commands mirrored from a main deck: they apply
+/// normally but are never re-forwarded, so decks can't loop.
+pub fn dispatch_ext(app: &AppHandle, cmd: Command, from_sync: bool) {
     let shared = app.state::<Shared>();
     // Native side effects that must run after the state lock is released.
     let mut launch_output = false;
     let mut restart_server = false;
+    let mut restart_sync = false;
     let mut move_display = false;
     let mut open_url: Option<String> = None;
     let mut browse = false;
     let mut persist = true;
+    // Command to mirror to the backup deck, if one is linked.
+    let mut fwd: Option<serde_json::Value> = None;
     let is_refresh = matches!(cmd, Command::RefreshSystem);
 
     {
@@ -738,9 +832,26 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                 st.transport.load(None, false, 0.0);
             }
             Command::SelectClip { id } => {
-                if st.clips.iter().any(|c| c.id == id) {
+                if let Some(i) = st.clips.iter().position(|c| c.id == id) {
                     st.selected = Some(id);
+                    fwd = Some(serde_json::json!({
+                        "type": "selectIndex", "payload": { "index": i }
+                    }));
                 }
+                persist = false;
+            }
+            Command::SelectIndex { index } => {
+                if let Some(c) = st.clips.get(index) {
+                    st.selected = Some(c.id.clone());
+                    fwd = Some(serde_json::json!({
+                        "type": "selectIndex", "payload": { "index": index }
+                    }));
+                }
+                persist = false;
+            }
+            Command::ClearSelection => {
+                st.selected = None;
+                fwd = Some(serde_json::json!({ "type": "clearSelection" }));
                 persist = false;
             }
             Command::SelectDelta { delta } => {
@@ -754,6 +865,9 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                         .unwrap_or(if delta > 0 { -1 } else { st.clips.len() as i32 });
                     let i = (from + delta).clamp(0, st.clips.len() as i32 - 1) as usize;
                     st.selected = Some(st.clips[i].id.clone());
+                    fwd = Some(serde_json::json!({
+                        "type": "selectIndex", "payload": { "index": i }
+                    }));
                 }
                 persist = false;
             }
@@ -777,23 +891,22 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                 }
             }
             Command::Take { id } => {
-                let target = id
-                    .filter(|id| st.clips.iter().any(|c| c.id == *id && !c.missing))
-                    .or_else(|| {
-                        st.selected
-                            .clone()
-                            .filter(|id| st.clips.iter().any(|c| c.id == *id && !c.missing))
-                    })
-                    .or_else(|| st.clips.iter().find(|c| !c.missing).map(|c| c.id.clone()));
-                if let Some(target) = target {
-                    let start = st.clip_in(&target);
-                    st.transport.load(Some(target.clone()), true, start);
-                    if st.selected.as_deref() != Some(target.as_str()) {
-                        st.selected = Some(target.clone());
-                    }
-                    st.advance_selection(&target);
+                if let Some(idx) = do_take(&mut st, id) {
                     // Take with no output window open brings one up.
                     launch_output = app.get_window("output").is_none();
+                    fwd = Some(serde_json::json!({
+                        "type": "takeIndex", "payload": { "index": idx }
+                    }));
+                }
+                persist = false;
+            }
+            Command::TakeIndex { index } => {
+                let id = st.clips.get(index).map(|c| c.id.clone());
+                if let Some(idx) = id.and_then(|id| do_take(&mut st, Some(id))) {
+                    launch_output = app.get_window("output").is_none();
+                    fwd = Some(serde_json::json!({
+                        "type": "takeIndex", "payload": { "index": idx }
+                    }));
                 }
                 persist = false;
             }
@@ -801,17 +914,20 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                 if st.transport.current.is_some() {
                     st.transport.playing = !st.transport.playing;
                     st.transport.last = Some(Instant::now());
+                    fwd = Some(serde_json::json!({ "type": "playPause" }));
                 }
                 persist = false;
             }
             Command::Kill => {
                 st.transport.load(None, false, 0.0);
+                fwd = Some(serde_json::json!({ "type": "kill" }));
                 persist = false;
             }
             Command::Restart => {
                 if let Some(id) = st.transport.current.clone() {
                     let start = st.clip_in(&id);
                     st.transport.seek(start);
+                    fwd = Some(serde_json::json!({ "type": "restart" }));
                 }
                 persist = false;
             }
@@ -819,6 +935,9 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                 if st.transport.current.is_some() && delta_ms.is_finite() {
                     let target = st.transport.position_ms + delta_ms;
                     st.transport.seek(target);
+                    fwd = Some(serde_json::json!({
+                        "type": "jump", "payload": { "deltaMs": delta_ms }
+                    }));
                 }
                 persist = false;
             }
@@ -830,6 +949,9 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                             let out = c.out_effective(dur);
                             let target = (out - offset_ms.max(0.0)).max(c.in_ms);
                             st.transport.seek(target);
+                            fwd = Some(serde_json::json!({
+                                "type": "jumpToEnd", "payload": { "offsetMs": offset_ms }
+                            }));
                         }
                     }
                 }
@@ -838,6 +960,9 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
             Command::Seek { ms } => {
                 if st.transport.current.is_some() && ms.is_finite() {
                     st.transport.seek(ms);
+                    fwd = Some(serde_json::json!({
+                        "type": "seek", "payload": { "ms": ms }
+                    }));
                 }
                 persist = false;
             }
@@ -874,7 +999,22 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
                     }
                 }
             }
-            Command::SetEndMode { mode } => st.end_mode = mode,
+            Command::SetEndMode { mode } => {
+                st.end_mode = mode;
+                if let Ok(m) = serde_json::to_value(mode) {
+                    fwd = Some(serde_json::json!({
+                        "type": "setEndMode", "payload": { "mode": m }
+                    }));
+                }
+            }
+            Command::SetFollower { target } => {
+                let target = target.filter(|t| t.parse::<std::net::SocketAddr>().is_ok());
+                if st.sync.follower != target {
+                    st.sync.follower = target;
+                    st.sync.linked = false;
+                    restart_sync = true;
+                }
+            }
             Command::SetAspect { aspect } => st.geometry.aspect = aspect,
             Command::SetOutputScale { scale } => {
                 if scale.is_finite() {
@@ -997,11 +1137,25 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
         refresh_network_info(app);
         crate::server::restart(app.clone());
     }
+    if restart_sync {
+        crate::sync::restart_follower(app.clone());
+    }
     if let Some(url) = open_url {
         let _ = open::that(url);
     }
     if browse {
         browse_files(app);
+    }
+
+    // Mirror show commands to the linked backup deck — unless this command
+    // itself came from a main deck (a follower never re-forwards).
+    if !from_sync {
+        if let Some(f) = fwd {
+            let tx = shared.sync_tx.lock().unwrap();
+            if let Some(tx) = &*tx {
+                let _ = tx.send(f.to_string());
+            }
+        }
     }
 
     if persist {

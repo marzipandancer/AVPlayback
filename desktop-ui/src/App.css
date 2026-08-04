@@ -307,6 +307,49 @@ select {
   flex: 1;
 }
 
+/* Backup sync -------------------------------------------------------------- */
+
+.sync-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px;
+}
+.sync-label {
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.sync-row select {
+  flex: 1;
+  min-width: 0;
+}
+.sync-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #444444;
+  border: 1px solid #666666;
+  flex-shrink: 0;
+}
+.sync-dot.linked {
+  background: #4cd964;
+  border-color: #4cd964;
+  box-shadow: 0 0 6px #4cd96488;
+}
+.sync-dot.searching {
+  background: var(--amber);
+  border-color: var(--amber);
+  animation: hotkey-pulse 1s ease-in-out infinite;
+}
+.sync-status {
+  color: #aaaaaa;
+  font-size: 11px;
+  width: 74px;
+  flex-shrink: 0;
+}
+
 .status-chip {
   font-size: 11px;
   font-weight: 800;

@@ -61,6 +61,20 @@ export interface Network {
   error: string | null;
 }
 
+/** Another PlayBack instance seen on the network (via sync beacons). */
+export interface Peer {
+  name: string;
+  /** "ip:port" of the peer's built-in server. */
+  addr: string;
+}
+
+/** Built-in Simple Sync: main deck mirrors show commands to a backup deck. */
+export interface SyncState {
+  peers: Peer[];
+  follower: string | null;
+  linked: boolean;
+}
+
 export interface MonitorInfo {
   name: string;
   width: number;
@@ -102,6 +116,7 @@ export interface AppState {
   network: Network;
   monitors: MonitorInfo[];
   selectedMonitor: number | null;
+  sync: SyncState;
 }
 
 export type Command =
@@ -112,10 +127,14 @@ export type Command =
   | { type: "clearPlaylist" }
   | { type: "selectClip"; payload: { id: string } }
   | { type: "selectDelta"; payload: { delta: number } }
+  | { type: "selectIndex"; payload: { index: number } }
+  | { type: "clearSelection" }
   | { type: "setClipDuration"; payload: { id: string; durationMs: number } }
   | { type: "setClipLoop"; payload: { id: string; enabled: boolean } }
   | { type: "setClipGain"; payload: { id: string; gain: number } }
   | { type: "take"; payload: { id: string | null } }
+  | { type: "takeIndex"; payload: { index: number } }
+  | { type: "setFollower"; payload: { target: string | null } }
   | { type: "playPause" }
   | { type: "kill" }
   | { type: "restart" }

@@ -1,9 +1,11 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod control;
 mod display;
 mod server;
 mod state;
+mod sync;
 
 #[tauri::command]
 fn get_state(app: tauri::AppHandle) -> serde_json::Value {
@@ -23,11 +25,14 @@ fn main() {
             let handle = app.handle();
             state::set_version(&handle);
             state::load(&handle);
+            state::apply_env_overrides(&handle);
             // Monitor enumeration blocks on the event loop, which hasn't
             // started yet inside setup — do startup work off-thread.
             tauri::async_runtime::spawn(async move {
                 state::refresh_system(&handle);
                 server::restart(handle.clone());
+                control::start(handle.clone());
+                sync::start(handle.clone());
                 state::broadcast(&handle);
             });
             Ok(())

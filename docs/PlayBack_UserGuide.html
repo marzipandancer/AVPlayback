@@ -72,6 +72,37 @@ its in and out points instead, whatever the end mode.</p>
 </table>
 <p>All bindings are configurable in Advanced Settings (⚙).</p>
 
+<h2>External Control (PlaybackPro-compatible)</h2>
+<p>PlayBack speaks DT Videolabs PlaybackPro Plus's network protocol:
+raw ASCII commands, no terminators, over <b>TCP port 4647</b> or
+<b>UDP port 7000</b>. In <b>Bitfocus Companion</b>, add a connection of type
+<i>“DT Videolabs PlaybackPro Plus”</i>, point it at this machine's IP, pick
+TCP or UDP — the stock module drives PlayBack with no changes.</p>
+<table>
+  <tr><th>Command</th><th>Action</th><th>Command</th><th>Action</th></tr>
+  <tr><td><code>TA</code></td><td>Take</td><td><code>KL</code></td><td>Kill to black</td></tr>
+  <tr><td><code>OP</code></td><td>Pause/play toggle</td><td><code>PA</code> / <code>PL</code></td><td>Pause / Resume program</td></tr>
+  <tr><td><code>PR</code> / <code>NX</code></td><td>Cue previous / next clip</td><td><code>CL</code></td><td>Clear cue</td></tr>
+  <tr><td><code>GO&lt;n&gt;</code></td><td>Cue clip <i>n</i> (1-based)</td><td><code>GT&lt;n&gt;</code></td><td>Take clip <i>n</i></td></tr>
+  <tr><td><code>10</code> / <code>20</code> / <code>30</code></td><td>Jump to last 10/20/30 s</td><td><code>OI</code> / <code>OO</code></td><td>Goto in / out point</td></tr>
+  <tr><td><code>O-</code> / <code>O+</code></td><td>Step back / forward</td><td><code>OR</code> / <code>OF</code></td><td>Skip −5 s / +5 s</td></tr>
+  <tr><td><code>ES</code> / <code>EE</code></td><td>Mark in / out</td><td><code>LT</code> <code>SL</code> <code>EL</code></td><td>Loop toggle / on / off (current clip)</td></tr>
+</table>
+<p>Unsupported PlaybackPro commands (preview transport, fade/timing trims,
+<code>SA</code>) are accepted and ignored, so controller salvos never fail.
+A richer JSON command set is also available over the WebSocket at
+<code>/ws</code> — every action in the UI is a one-line JSON message.</p>
+
+<h2>Backup Sync (built-in Simple Sync)</h2>
+<p>Every PlayBack deck announces itself on the network (UDP port 3101).
+On the <b>main</b> deck, pick the backup in the <b>Backup Sync</b> dropdown —
+the dot turns green (“sync-rolling”) and every show command (take, kill,
+pause, seeks, cueing, end mode) mirrors to the backup instantly. Commands
+address clips <i>by playlist position</i>, so load the same clips in the same
+order on both decks. Trim, loop, levels and geometry stay per-deck. The
+backup deck needs no configuration — leave its dropdown on
+<i>None&nbsp;(solo)</i>.</p>
+
 <h2>Remote Access</h2>
 <p>Any device on the same network can open:</p>
 <p>Control surface: <code>http://10.1.10.140:3100/control</code><br>
