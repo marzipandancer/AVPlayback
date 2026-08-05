@@ -33,9 +33,11 @@ export function OutputView({ store }: { store: Store }) {
   // loadSeq tag lets the reducer drop reports that raced a clip change.
   const loadSeqRef = useRef(0);
   loadSeqRef.current = t?.loadSeq ?? 0;
+  const lastReport = useRef(0);
   const report = (ended: boolean) => {
     const v = videoRef.current;
     if (!v || !src) return;
+    lastReport.current = performance.now();
     send({
       type: "mediaStatus",
       payload: {
@@ -90,16 +92,18 @@ export function OutputView({ store }: { store: Store }) {
     v.muted = t?.muted ?? false;
   }, [t?.volume, t?.muted, gain, src]);
 
-  // Periodic progress reports; extrapolation on the other views corrects
-  // itself against these. Doubles as self-healing: if intent is "playing"
-  // but the element fell paused (autoplay unblock, buffering), poke it.
+  // Self-healing backup: if intent is "playing" but the element fell paused
+  // (autoplay unblock, buffering), poke it. Progress itself is reported from
+  // the timeupdate handler — media-engine events keep firing when macOS naps
+  // an occluded window's timers, so this interval must never be the only
+  // source of position reports.
   useEffect(() => {
     if (!src || !playing) return;
     const id = setInterval(() => {
       const v = videoRef.current;
       if (v && v.paused && !v.ended) v.play().catch(() => {});
-      report(false);
-    }, 500);
+      if (performance.now() - lastReport.current >= 900) report(false);
+    }, 1000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src, playing]);
@@ -138,7 +142,10 @@ export function OutputView({ store }: { store: Store }) {
             if (v && !v.paused && outMs > 0 && v.currentTime * 1000 >= outMs) {
               v.pause();
               report(true);
+              return;
             }
+            // Regular progress reports ride the media engine's own events.
+            if (performance.now() - lastReport.current >= 450) report(false);
           }}
           onPlay={() => report(false)}
           onPause={() => {

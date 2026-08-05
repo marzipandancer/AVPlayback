@@ -162,11 +162,15 @@ impl TransportState {
         self.last = Some(now);
     }
 
-    fn load(&mut self, id: Option<String>, playing: bool, start_ms: f64) {
+    /// `duration_ms` seeds the file duration from the probed playlist value
+    /// so progress rendering works even before (or without) the output's
+    /// first report — occluded output windows get their timers napped by
+    /// macOS. Reports refine it with the media engine's exact figure.
+    fn load(&mut self, id: Option<String>, playing: bool, start_ms: f64, duration_ms: f64) {
         self.current = id;
         self.playing = playing && self.current.is_some();
         self.position_ms = start_ms.max(0.0);
-        self.duration_ms = 0.0;
+        self.duration_ms = duration_ms.max(0.0);
         self.load_seq += 1;
         self.last = Some(Instant::now());
     }
@@ -825,7 +829,8 @@ fn do_take(st: &mut AppState, requested: Option<String>) -> Option<usize> {
         })
         .or_else(|| st.clips.iter().find(|c| !c.missing).map(|c| c.id.clone()))?;
     let start = st.clip_in(&target);
-    st.transport.load(Some(target.clone()), true, start);
+    let dur = st.clip(&target).and_then(|c| c.duration_ms).unwrap_or(0.0);
+    st.transport.load(Some(target.clone()), true, start, dur);
     if st.selected.as_deref() != Some(target.as_str()) {
         st.selected = Some(target.clone());
     }
@@ -891,7 +896,7 @@ pub fn dispatch_ext(app: &AppHandle, cmd: Command, from_sync: bool) {
                             .map(|c| c.id.clone());
                     }
                     if st.transport.current.as_deref() == Some(id.as_str()) {
-                        st.transport.load(None, false, 0.0);
+                        st.transport.load(None, false, 0.0, 0.0);
                     }
                 }
             }
@@ -905,7 +910,7 @@ pub fn dispatch_ext(app: &AppHandle, cmd: Command, from_sync: bool) {
             Command::ClearPlaylist => {
                 st.clips.clear();
                 st.selected = None;
-                st.transport.load(None, false, 0.0);
+                st.transport.load(None, false, 0.0, 0.0);
             }
             Command::SelectClip { id } => {
                 if let Some(i) = st.clips.iter().position(|c| c.id == id) {
@@ -995,7 +1000,7 @@ pub fn dispatch_ext(app: &AppHandle, cmd: Command, from_sync: bool) {
                 persist = false;
             }
             Command::Kill => {
-                st.transport.load(None, false, 0.0);
+                st.transport.load(None, false, 0.0, 0.0);
                 fwd = Some(serde_json::json!({ "type": "kill" }));
                 persist = false;
             }
@@ -1327,7 +1332,7 @@ fn apply_sync_playlist(app: &AppHandle, st: &mut AppState, metas: Vec<SyncClipMe
     }
     if let Some(cur) = st.transport.current.clone() {
         if !st.clips.iter().any(|c| c.id == cur) {
-            st.transport.load(None, false, 0.0);
+            st.transport.load(None, false, 0.0, 0.0);
         }
     }
 }
@@ -1374,13 +1379,14 @@ fn apply_end_mode(st: &mut AppState) {
 
     match st.end_mode {
         EndMode::Hold => hold_at_end(&mut st.transport, out),
-        EndMode::Black => st.transport.load(None, false, 0.0),
+        EndMode::Black => st.transport.load(None, false, 0.0, 0.0),
         EndMode::Next | EndMode::CueNext => {
             let play = st.end_mode == EndMode::Next;
             match st.next_after(&current) {
                 Some(next) => {
                     let start = st.clip_in(&next);
-                    st.transport.load(Some(next.clone()), play, start);
+                    let dur = st.clip(&next).and_then(|c| c.duration_ms).unwrap_or(0.0);
+                    st.transport.load(Some(next.clone()), play, start, dur);
                     if st.selected.as_deref() == Some(next.as_str()) {
                         st.selected = st.next_after(&next);
                     }
