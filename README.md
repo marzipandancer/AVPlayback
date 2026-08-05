@@ -1,4 +1,4 @@
-# PlayBack
+# AVPlayback
 
 Playlist video playback for live events — a PlaybackPro-style clip player
 built with Tauri + React, sharing RunTime's architecture and UI language.
@@ -55,7 +55,7 @@ render only in the native windows. Prefer `-movflags +faststart` files.
 
 ## External control
 
-PlayBack answers DT Videolabs PlaybackPro Plus's published network
+AVPlayback answers DT Videolabs PlaybackPro Plus's published network
 protocol on **TCP 4647** and **UDP 7000** (raw ASCII commands, no
 terminators): `TA` `KL` `OP` `PA` `PL` `PR` `NX` `CL` `GO<n>` `GT<n>`
 `10/20/30` `OI` `OO` `O-` `O+` `OR` `OF` `ES` `EE` `LT` `SL` `EL`.
@@ -115,4 +115,4 @@ Notes:
 - The vite dev server (port 5174) proxies `/ws` and `/media` to
   `localhost:3100`, so `http://localhost:5174/control` works in a plain
   browser during development.
-- Default server port is 3100 so PlayBack and RunTime can share a machine.
+- Default server port is 3100 so AVPlayback and RunTime can share a machine.

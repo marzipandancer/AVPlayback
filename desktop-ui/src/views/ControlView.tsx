@@ -202,7 +202,7 @@ export function ControlView({ store }: { store: Store }) {
           </button>
         </div>
         <div className="wordmark" aria-hidden>
-          <span className="wordmark-mono">▶</span>PlayBack
+          <span className="wordmark-mono">▶</span>AVPlayback
         </div>
         <div className="server-info">
           Server IP: {state.network.ip}

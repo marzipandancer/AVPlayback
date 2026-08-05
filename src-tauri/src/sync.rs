@@ -91,7 +91,7 @@ async fn beacon_listener(app: AppHandle) {
         let name = v
             .get("name")
             .and_then(|s| s.as_str())
-            .unwrap_or("PlayBack")
+            .unwrap_or("AVPlayback")
             .to_string();
         let addr = format!("{}:{}", src.ip(), port);
         let is_loopback = src.ip().is_loopback();

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>PlayBack — User Guide</title>
+<title>AVPlayback — User Guide</title>
 <style>
   body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
          background: #333; color: #eee; max-width: 760px; margin: 0 auto;
@@ -20,8 +20,8 @@
 </style>
 </head>
 <body>
-<h1><span class="mono">▶</span>PlayBack — User Guide</h1>
-<p>PlayBack is playlist video playback for live events: cue clips on the control
+<h1><span class="mono">▶</span>AVPlayback — User Guide</h1>
+<p>AVPlayback is playlist video playback for live events: cue clips on the control
 surface, punch <b>TAKE</b>, and the program output plays them full screen on the
 selected display. Any browser on the network can mirror the control surface or
 the output.</p>
@@ -73,11 +73,11 @@ its in and out points instead, whatever the end mode.</p>
 <p>All bindings are configurable in Advanced Settings (⚙).</p>
 
 <h2>External Control (PlaybackPro-compatible)</h2>
-<p>PlayBack speaks DT Videolabs PlaybackPro Plus's network protocol:
+<p>AVPlayback speaks DT Videolabs PlaybackPro Plus's network protocol:
 raw ASCII commands, no terminators, over <b>TCP port 4647</b> or
 <b>UDP port 7000</b>. In <b>Bitfocus Companion</b>, add a connection of type
 <i>“DT Videolabs PlaybackPro Plus”</i>, point it at this machine's IP, pick
-TCP or UDP — the stock module drives PlayBack with no changes.</p>
+TCP or UDP — the stock module drives AVPlayback with no changes.</p>
 <table>
   <tr><th>Command</th><th>Action</th><th>Command</th><th>Action</th></tr>
   <tr><td><code>TA</code></td><td>Take</td><td><code>KL</code></td><td>Kill to black</td></tr>
@@ -94,7 +94,7 @@ A richer JSON command set is also available over the WebSocket at
 <code>/ws</code> — every action in the UI is a one-line JSON message.</p>
 
 <h2>Backup Sync — the backup is a perfect copy</h2>
-<p>Every PlayBack deck announces itself on the network (UDP port 3101).
+<p>Every AVPlayback deck announces itself on the network (UDP port 3101).
 On the <b>main</b> deck, pick the backup in the <b>Backup Sync</b> dropdown.
 From that moment the backup is maintained entirely from the main deck:</p>
 <ul>
@@ -122,7 +122,7 @@ Program output / confidence monitor: <code>http://10.1.10.140:3100/output</code>
 then on.</p>
 
 <h2>Formats</h2>
-<p>PlayBack plays what the platform's media engine plays. On a Mac that is
+<p>AVPlayback plays what the platform's media engine plays. On a Mac that is
 AVFoundation, so <b>ProRes .mov files play natively with hardware decode</b>,
 alongside H.264 and HEVC. H.264/AAC in <code>.mp4</code>/<code>.mov</code>
 (ideally with <code>faststart</code>) is the safe bet everywhere — it is also

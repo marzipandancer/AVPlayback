@@ -36,7 +36,7 @@ pub fn launch(app: &AppHandle) {
             "output",
             tauri::WindowUrl::App("index.html".into()),
         )
-        .title("PlayBack — Output")
+        .title("AVPlayback — Output")
         .inner_size(1280.0, 720.0);
 
         match builder.build() {

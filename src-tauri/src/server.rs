@@ -26,7 +26,7 @@ struct Assets;
 /// User guide, served at /help. The remote-access URLs in the document use
 /// this placeholder address; it is swapped for the live server address at
 /// request time so the copy buttons yield working URLs.
-const HELP_HTML: &str = include_str!("../../docs/PlayBack_UserGuide.html");
+const HELP_HTML: &str = include_str!("../../docs/AVPlayback_UserGuide.html");
 const HELP_ADDR_PLACEHOLDER: &str = "10.1.10.140:3100";
 
 /// (Re)start the web server using the network settings currently in state.

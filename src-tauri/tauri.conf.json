@@ -1,6 +1,6 @@
 {
   "$schema": "https://tauri.app/v1/schema.json",
-  "package": { "productName": "PlayBack", "version": "0.1.0" },
+  "package": { "productName": "AVPlayback", "version": "0.1.0" },
   "build": {
     "beforeDevCommand": "pnpm --dir ./desktop-ui dev",
     "devPath": "http://localhost:5174",
@@ -25,7 +25,7 @@
     "windows": [
       {
         "label": "control",
-        "title": "PlayBack — Control",
+        "title": "AVPlayback — Control",
         "width": 1400,
         "height": 1000,
         "minWidth": 1080,
