@@ -460,15 +460,14 @@ select {
   color: var(--amber);
   border-color: var(--amber);
 }
+/* The on/off phase is driven from the countdown clock in ControlView so
+   each flash lands exactly on a second tick — no free-running animation. */
 .timecode-remaining.flash-red {
   color: var(--alert);
   border-color: var(--alert);
-  animation: remaining-flash 0.6s step-start infinite;
 }
-@keyframes remaining-flash {
-  50% {
-    opacity: 0.35;
-  }
+.timecode-remaining.flash-red.flash-off {
+  opacity: 0.35;
 }
 
 .progress {

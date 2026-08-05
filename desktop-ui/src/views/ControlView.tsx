@@ -589,10 +589,14 @@ function NowPlayingSection({
     : "PAUSED";
 
   // PlaybackPro-style urgency: amber inside 30s, flashing red inside 10s.
+  // The flash beats on the countdown itself — bright the instant the digit
+  // ticks, dimmed for the back half of each second — instead of a
+  // free-running animation that drifts off-beat.
+  const flashOn = remaining % 1000 >= 500;
   const urgency =
     clip && t.playing && ready
       ? remaining <= 10000
-        ? " flash-red"
+        ? " flash-red" + (flashOn ? "" : " flash-off")
         : remaining <= 30000
         ? " amber"
         : ""
