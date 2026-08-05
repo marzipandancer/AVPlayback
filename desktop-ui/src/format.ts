@@ -6,10 +6,23 @@ const pad = (n: number) => String(n).padStart(2, "0");
 
 /**
  * Format a millisecond duration as a timecode: "mm:ss" under an hour,
- * "h:mm:ss" above. Used for playlist durations and the big readouts.
+ * "h:mm:ss" above. Floor semantics — for elapsed time, durations and
+ * playlist totals.
  */
 export function formatTime(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
+  return formatSeconds(Math.max(0, Math.floor(ms / 1000)));
+}
+
+/**
+ * Countdown semantics (ceiling): the readout flips to "10" at exactly
+ * 10.000s remaining, so an operator calling the count on each flip is
+ * calling true time — and "0" lands on the actual end, not a second early.
+ */
+export function formatCountdown(ms: number): string {
+  return formatSeconds(Math.max(0, Math.ceil(ms / 1000)));
+}
+
+function formatSeconds(total: number): string {
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;

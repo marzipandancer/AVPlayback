@@ -3,6 +3,7 @@ import {
   clipDurationLabel,
   clipOut,
   clipRuntimeMs,
+  formatCountdown,
   formatTime,
   isTrimmed,
   mediaUrl,
@@ -360,7 +361,7 @@ function PlaylistSection({
         <span className="bar-note">
           {clips.length} {clips.length === 1 ? "clip" : "clips"} · total{" "}
           {formatTime(totalMs(clips))} · remaining{" "}
-          {formatTime(remainingMs(snap, posMs))}
+          {formatCountdown(remainingMs(snap, posMs))}
         </span>
       </SectionBar>
 
@@ -626,9 +627,9 @@ function NowPlayingSection({
           <span className="timecode-caption">Remaining</span>
           <span
             className={"timecode timecode-remaining" + urgency}
-            title="Time left until the clip's out point"
+            title="Time left until the clip's out point (flips to 10 at exactly 10.0s — call the count on the flips)"
           >
-            {ready ? formatTime(remaining) : "--:--"}
+            {ready ? formatCountdown(remaining) : "--:--"}
           </span>
         </div>
         <div className="timecode-group">
