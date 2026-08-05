@@ -261,7 +261,7 @@ function SyncRow({ state, send }: { state: AppState; send: Send }) {
     <div className="sync-row">
       <span
         className="sync-label"
-        title="Mirror every show command to a backup PlayBack deck on the network (built-in Simple Sync). Load the same playlist on both decks."
+        title="Pick a backup PlayBack deck: its playlist becomes a perfect copy of this one (media included, pushed over the network) and every show command mirrors to it in real time."
       >
         Backup Sync
       </span>
@@ -291,14 +291,14 @@ function SyncRow({ state, send }: { state: AppState; send: Send }) {
         }
         title={
           s.linked
-            ? "Backup linked — commands mirror to it"
+            ? "Backup linked — playlist mirrored, commands sync-roll"
             : s.follower
             ? "Trying to reach the backup deck…"
             : "No backup selected"
         }
       />
-      <span className="sync-status">
-        {s.linked ? "sync-rolling" : s.follower ? "connecting…" : ""}
+      <span className="sync-status" title={s.mirror || undefined}>
+        {s.linked ? s.mirror || "sync-rolling" : s.follower ? "connecting…" : ""}
       </span>
     </div>
   );

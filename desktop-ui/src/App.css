@@ -346,7 +346,11 @@ select {
 .sync-status {
   color: #aaaaaa;
   font-size: 11px;
-  width: 74px;
+  min-width: 74px;
+  max-width: 220px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   flex-shrink: 0;
 }
 

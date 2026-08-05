@@ -73,6 +73,8 @@ export interface SyncState {
   peers: Peer[];
   follower: string | null;
   linked: boolean;
+  /** Playlist mirroring status ("", "scanning…", "uploading 1/3 (40%)", "mirrored"…). */
+  mirror: string;
 }
 
 export interface MonitorInfo {

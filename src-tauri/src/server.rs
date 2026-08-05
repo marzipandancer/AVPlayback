@@ -62,6 +62,12 @@ pub fn restart(app: AppHandle) {
         let router = Router::new()
             .route("/ws", get(ws_handler))
             .route("/media/:id", get(media_handler))
+            .route("/sync/have/:fp", get(sync_have_handler))
+            .route(
+                "/sync/media/:fp",
+                axum::routing::post(sync_upload_handler)
+                    .layer(axum::extract::DefaultBodyLimit::disable()),
+            )
             .route("/help", get(help_handler))
             .fallback(static_handler)
             .with_state(app2.clone());
@@ -107,6 +113,85 @@ async fn media_handler(
         },
         None => (StatusCode::NOT_FOUND, "no such clip").into_response(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Playlist mirroring — receiving side
+// ---------------------------------------------------------------------------
+
+fn valid_fp(fp: &str) -> bool {
+    (16..=64).contains(&fp.len()) && fp.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+/// Does this deck's sync-media cache already hold content `fp`?
+async fn sync_have_handler(
+    Path(fp): Path<String>,
+    State(app): State<AppHandle>,
+) -> impl IntoResponse {
+    if !valid_fp(&fp) {
+        return StatusCode::BAD_REQUEST;
+    }
+    let Some(dir) = state::sync_media_dir(&app) else {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    };
+    let prefix = format!("{fp}_");
+    let found = std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .any(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+        })
+        .unwrap_or(false);
+    if found {
+        StatusCode::OK
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
+
+/// Receive one media file from a main deck, streamed straight to the
+/// sync-media cache (temp file + rename, so a dropped transfer never
+/// leaves a half-written clip behind).
+async fn sync_upload_handler(
+    Path(fp): Path<String>,
+    Query(params): Query<HashMap<String, String>>,
+    State(app): State<AppHandle>,
+    req: Request,
+) -> impl IntoResponse {
+    if !valid_fp(&fp) {
+        return (StatusCode::BAD_REQUEST, "bad fingerprint");
+    }
+    let name = state::sanitize_filename(params.get("name").map(String::as_str).unwrap_or("clip"));
+    let Some(dir) = state::sync_media_dir(&app) else {
+        return (StatusCode::INTERNAL_SERVER_ERROR, "no cache dir");
+    };
+    let final_path = dir.join(format!("{fp}_{name}"));
+    let tmp_path = dir.join(format!(".{fp}.part"));
+
+    use futures_util::StreamExt;
+    use tokio::io::AsyncWriteExt;
+    let mut file = match tokio::fs::File::create(&tmp_path).await {
+        Ok(f) => f,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "cannot write cache"),
+    };
+    let mut stream = req.into_body().into_data_stream();
+    while let Some(chunk) = stream.next().await {
+        let Ok(chunk) = chunk else {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return (StatusCode::INTERNAL_SERVER_ERROR, "transfer interrupted");
+        };
+        if file.write_all(&chunk).await.is_err() {
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            return (StatusCode::INTERNAL_SERVER_ERROR, "disk write failed");
+        }
+    }
+    if file.flush().await.is_err()
+        || tokio::fs::rename(&tmp_path, &final_path).await.is_err()
+    {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return (StatusCode::INTERNAL_SERVER_ERROR, "finalize failed");
+    }
+    (StatusCode::OK, "stored")
 }
 
 // ---------------------------------------------------------------------------

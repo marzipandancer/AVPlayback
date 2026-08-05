@@ -36,6 +36,10 @@ pub struct Clip {
     /// Per-clip audio level, multiplied with the master volume.
     #[serde(default = "default_gain")]
     pub gain: f64,
+    /// Content fingerprint, set on clips that arrived via playlist
+    /// mirroring (their files live in the managed sync-media cache).
+    #[serde(default)]
+    pub fp: Option<String>,
 }
 
 fn default_gain() -> f64 {
@@ -262,6 +266,9 @@ pub struct SyncState {
     pub follower: Option<String>,
     /// Live connection to the follower is up.
     pub linked: bool,
+    /// Playlist mirroring status ("", "scanning…", "uploading 1/3: name",
+    /// "mirrored", "mirror error: …").
+    pub mirror: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -481,6 +488,7 @@ impl AppState {
             in_ms: 0.0,
             out_ms: None,
             gain: 1.0,
+            fp: None,
         });
         if self.selected.is_none() && !missing {
             self.selected = Some(id);
@@ -688,6 +696,9 @@ pub enum Command {
     },
     /// Choose (or clear) the backup deck this one mirrors commands to.
     SetFollower { target: Option<String> },
+    /// Full playlist layout pushed by a main deck after media transfer.
+    /// Only ever arrives over a sync connection.
+    SyncPlaylist { clips: Vec<SyncClipMeta> },
     // Windows / settings
     SetHotkey { action: HotkeyAction, binding: Option<String> },
     SetLaunchFullscreen { enabled: bool },
@@ -699,6 +710,34 @@ pub enum Command {
     OpenWebControl,
     OpenWebOutput,
     OpenHelp,
+}
+
+/// One clip's layout in a mirrored playlist: content by fingerprint plus
+/// every per-clip setting the backup should copy.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncClipMeta {
+    pub fp: String,
+    /// Original file basename (keeps the extension for mime detection).
+    pub file: String,
+    #[serde(rename = "loop")]
+    pub looping: bool,
+    pub in_ms: f64,
+    pub out_ms: Option<f64>,
+    pub gain: f64,
+    pub duration_ms: Option<f64>,
+}
+
+/// Where mirrored media lands on a backup deck. Follows the PLAYBACK_STATE
+/// override so two dev instances on one machine keep separate caches.
+pub fn sync_media_dir(app: &AppHandle) -> Option<std::path::PathBuf> {
+    let dir = if let Ok(p) = std::env::var("PLAYBACK_STATE") {
+        std::path::PathBuf::from(p).parent()?.join("sync-media")
+    } else {
+        app.path_resolver().app_data_dir()?.join("sync-media")
+    };
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
 }
 
 // ---------------------------------------------------------------------------
@@ -713,6 +752,10 @@ pub struct Shared {
     pub sync_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
     /// The follower-client task, so reselecting a backup can replace it.
     pub sync_task: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
+    /// Nudges the playlist-mirror worker to reconcile with the backup.
+    pub mirror_tx: Mutex<Option<tokio::sync::mpsc::UnboundedSender<()>>>,
+    /// Fingerprint cache keyed by path, invalidated on size/mtime change.
+    pub fp_cache: Mutex<std::collections::HashMap<String, (u64, std::time::SystemTime, String)>>,
 }
 
 impl Shared {
@@ -724,7 +767,26 @@ impl Shared {
             server: Mutex::new(None),
             sync_tx: Mutex::new(None),
             sync_task: Mutex::new(None),
+            mirror_tx: Mutex::new(None),
+            fp_cache: Mutex::new(std::collections::HashMap::new()),
         }
+    }
+}
+
+/// Update the mirror status line shown in the sync row.
+pub fn set_mirror_status(app: &AppHandle, status: &str) {
+    let changed = {
+        let shared = app.state::<Shared>();
+        let mut st = shared.state.lock().unwrap();
+        if st.sync.mirror != status {
+            st.sync.mirror = status.to_string();
+            true
+        } else {
+            false
+        }
+    };
+    if changed {
+        broadcast(app);
     }
 }
 
@@ -785,6 +847,20 @@ pub fn dispatch_ext(app: &AppHandle, cmd: Command, from_sync: bool) {
     let mut persist = true;
     // Command to mirror to the backup deck, if one is linked.
     let mut fwd: Option<serde_json::Value> = None;
+    // Playlist or clip settings changed: nudge the mirror worker.
+    let mut mirror = matches!(
+        cmd,
+        Command::AddClips { .. }
+            | Command::RemoveClip { .. }
+            | Command::MoveClip { .. }
+            | Command::ClearPlaylist
+            | Command::SetClipDuration { .. }
+            | Command::SetClipLoop { .. }
+            | Command::SetClipGain { .. }
+            | Command::MarkIn
+            | Command::MarkOut
+            | Command::ClearTrim
+    );
     let is_refresh = matches!(cmd, Command::RefreshSystem);
 
     {
@@ -1012,8 +1088,17 @@ pub fn dispatch_ext(app: &AppHandle, cmd: Command, from_sync: bool) {
                 if st.sync.follower != target {
                     st.sync.follower = target;
                     st.sync.linked = false;
+                    st.sync.mirror = String::new();
                     restart_sync = true;
                 }
+            }
+            Command::SyncPlaylist { clips } => {
+                // Only a main deck's sync connection may rewrite the
+                // playlist wholesale.
+                if from_sync {
+                    apply_sync_playlist(app, &mut st, clips);
+                }
+                mirror = false;
             }
             Command::SetAspect { aspect } => st.geometry.aspect = aspect,
             Command::SetOutputScale { scale } => {
@@ -1156,12 +1241,109 @@ pub fn dispatch_ext(app: &AppHandle, cmd: Command, from_sync: bool) {
                 let _ = tx.send(f.to_string());
             }
         }
+        if mirror {
+            let tx = shared.mirror_tx.lock().unwrap();
+            if let Some(tx) = &*tx {
+                let _ = tx.send(());
+            }
+        }
     }
 
     if persist {
         save(app);
     }
     broadcast(app);
+}
+
+/// Rebuild the playlist from a main deck's mirrored layout. Files live in
+/// the sync-media cache under "<fp>_<basename>"; clips whose content is
+/// already present keep their id (so a playing clip survives a metadata
+/// update), and cache files no longer referenced are pruned.
+fn apply_sync_playlist(app: &AppHandle, st: &mut AppState, metas: Vec<SyncClipMeta>) {
+    let Some(dir) = sync_media_dir(app) else { return };
+    let mut new_clips: Vec<Clip> = Vec::with_capacity(metas.len());
+    for m in metas {
+        // Uploads sanitize names the same way, so this resolves the file
+        // the transfer produced.
+        let file = sanitize_filename(&m.file);
+        let path = dir.join(format!("{}_{}", m.fp, file));
+        let existing = st
+            .clips
+            .iter()
+            .find(|c| c.fp.as_deref() == Some(m.fp.as_str()))
+            .map(|c| (c.id.clone(), c.duration_ms));
+        let (id, probed) = match existing {
+            Some((id, d)) => (id, d),
+            None => {
+                let id = format!("c{}", st.next_clip_id);
+                st.next_clip_id += 1;
+                (id, None)
+            }
+        };
+        let missing = !path.is_file();
+        new_clips.push(Clip {
+            id,
+            path: path.to_string_lossy().into_owned(),
+            name: std::path::Path::new(&file)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or(file.clone()),
+            duration_ms: probed.or(m.duration_ms),
+            missing,
+            looping: m.looping,
+            in_ms: m.in_ms.max(0.0),
+            out_ms: m.out_ms.filter(|o| o.is_finite() && *o > 0.0),
+            gain: if m.gain.is_finite() { m.gain.clamp(0.0, 1.0) } else { 1.0 },
+            fp: Some(m.fp),
+        });
+    }
+
+    // Prune cache files the mirrored playlist no longer references.
+    let live: std::collections::HashSet<String> = new_clips
+        .iter()
+        .filter_map(|c| {
+            std::path::Path::new(&c.path)
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+        })
+        .collect();
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !live.contains(&name) {
+                let _ = std::fs::remove_file(e.path());
+            }
+        }
+    }
+
+    st.clips = new_clips;
+    if let Some(sel) = st.selected.clone() {
+        if !st.clips.iter().any(|c| c.id == sel) {
+            st.selected = None;
+        }
+    }
+    if st.selected.is_none() {
+        st.selected = st.clips.iter().find(|c| !c.missing).map(|c| c.id.clone());
+    }
+    if let Some(cur) = st.transport.current.clone() {
+        if !st.clips.iter().any(|c| c.id == cur) {
+            st.transport.load(None, false, 0.0);
+        }
+    }
+}
+
+/// Basename only, path separators stripped — used on both the upload
+/// endpoint and playlist application so the two always agree.
+pub fn sanitize_filename(name: &str) -> String {
+    let base = std::path::Path::new(name)
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let cleaned: String = base
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | ':' | '\0'))
+        .collect();
+    if cleaned.is_empty() { "clip".into() } else { cleaned }
 }
 
 /// What happens when the output reports the clip ended (file end or out

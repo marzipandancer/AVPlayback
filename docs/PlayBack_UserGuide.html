@@ -93,15 +93,25 @@ TCP or UDP — the stock module drives PlayBack with no changes.</p>
 A richer JSON command set is also available over the WebSocket at
 <code>/ws</code> — every action in the UI is a one-line JSON message.</p>
 
-<h2>Backup Sync (built-in Simple Sync)</h2>
+<h2>Backup Sync — the backup is a perfect copy</h2>
 <p>Every PlayBack deck announces itself on the network (UDP port 3101).
-On the <b>main</b> deck, pick the backup in the <b>Backup Sync</b> dropdown —
-the dot turns green (“sync-rolling”) and every show command (take, kill,
-pause, seeks, cueing, end mode) mirrors to the backup instantly. Commands
-address clips <i>by playlist position</i>, so load the same clips in the same
-order on both decks. Trim, loop, levels and geometry stay per-deck. The
-backup deck needs no configuration — leave its dropdown on
-<i>None&nbsp;(solo)</i>.</p>
+On the <b>main</b> deck, pick the backup in the <b>Backup Sync</b> dropdown.
+From that moment the backup is maintained entirely from the main deck:</p>
+<ul>
+  <li><b>Media copies itself.</b> Clips the backup doesn't have are pushed
+      to it over the network (watch the progress next to the dropdown:
+      “uploading 1/3 … (45%)” → “mirrored”). Big ProRes files take as long
+      as the network takes — do it before doors.</li>
+  <li><b>Playlist follows.</b> Order, in/out trims, loops, and per-clip
+      levels copy over on every change, automatically.</li>
+  <li><b>Transport sync-rolls.</b> Take, kill, pause, seeks, cueing and the
+      end-of-clip mode mirror instantly.</li>
+</ul>
+<p>The backup deck needs <i>zero</i> configuration — leave its own dropdown on
+<i>None&nbsp;(solo)</i>. Geometry, master volume and output-display selection
+stay per-deck, since they belong to each machine's projector and audio
+chain. Note that selecting a deck as your backup replaces its playlist with
+the mirror.</p>
 
 <h2>Remote Access</h2>
 <p>Any device on the same network can open:</p>

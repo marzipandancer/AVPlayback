@@ -65,15 +65,28 @@ TCP or UDP. Unsupported PlaybackPro commands are accepted and ignored.
 The full JSON command set is also scriptable over `/ws` (see
 `desktop-ui/src/types.ts` for the schema).
 
-## Backup sync (built-in Simple Sync)
+## Backup sync (built-in Simple Sync, plus media mirroring)
 
 Decks discover each other via UDP beacons (port 3101). The main deck's
-**Backup Sync** dropdown picks a follower; every show command then
-mirrors to it over a websocket, addressed by playlist index so clip ids
-never need to match — load the same clips in the same order on both
-decks. Followers never re-forward, so decks can't loop. Dev overrides
-for running two instances on one machine: `PLAYBACK_PORT` and
-`PLAYBACK_STATE`.
+**Backup Sync** dropdown picks a follower, and from then on the backup
+is a perfect copy, maintained entirely from the main deck:
+
+- **Media**: clips are fingerprinted (sha256 over size + first/last
+  64 KiB) and any content the backup lacks is pushed to it over HTTP
+  into a managed cache (`sync-media/`), with progress in the sync row.
+  Unreferenced cache files are pruned automatically.
+- **Layout**: playlist order, names, trims, loops, per-clip levels and
+  durations are re-sent (debounced) after every change; the backup
+  rebuilds its playlist to match, keeping a playing clip alive when its
+  content survives the update.
+- **Transport**: take/kill/pause/seeks/cueing/end-mode mirror live,
+  addressed by playlist index.
+
+Followers never re-forward, so decks can't loop. Geometry, master
+volume and output-display selection stay per-deck (they belong to each
+machine's projector and audio chain). Dev overrides for two instances
+on one machine: `PLAYBACK_PORT` and `PLAYBACK_STATE` (the media cache
+follows the state override).
 
 ## Show features
 
