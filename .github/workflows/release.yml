@@ -1,0 +1,84 @@
+# Builds installers for every platform and attaches them to a GitHub
+# Release. Trigger by pushing a version tag:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# The version in the tag should match src-tauri/tauri.conf.json.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: --target universal-apple-darwin
+            targets: aarch64-apple-darwin,x86_64-apple-darwin
+          - platform: windows-latest
+            args: ""
+            targets: ""
+          - platform: ubuntu-22.04
+            args: ""
+            targets: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.targets }}
+
+      - name: Install Linux dependencies (Tauri v1 needs webkit2gtk-4.0)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.0-dev build-essential curl \
+            wget file libssl-dev libgtk-3-dev libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Install frontend dependencies
+        run: |
+          pnpm install
+          pnpm --dir desktop-ui install
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "AVPlayback v__VERSION__"
+          releaseBody: |
+            Playlist video playback for live events — take/kill transport,
+            per-clip loop & trim, ProRes on macOS, PlaybackPro-compatible
+            external control (Companion-ready), and self-mirroring backup
+            decks.
+
+            **Downloads**
+            - macOS (Intel + Apple Silicon): the `.dmg`
+            - Windows: the `.msi`
+            - Linux: the `.AppImage` or `.deb`
+
+            **macOS note:** builds are unsigned. If macOS says the app is
+            damaged after downloading, clear the quarantine flag once:
+            `xattr -cr /Applications/AVPlayback.app`
+
+            **Windows note:** SmartScreen may warn on first run — choose
+            "More info" → "Run anyway".
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
