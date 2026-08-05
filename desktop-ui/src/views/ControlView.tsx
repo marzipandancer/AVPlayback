@@ -6,6 +6,7 @@ import {
   formatCountdown,
   formatTime,
   isTrimmed,
+  isUnplayable,
   mediaUrl,
   videoGeometryStyle,
 } from "../format";
@@ -378,6 +379,7 @@ function PlaylistSection({
         {clips.map((clip, i) => {
           const isCurrent = transport.current === clip.id;
           const isSelected = selected === clip.id;
+          const unplayable = isUnplayable(clip);
           return (
             <div
               key={clip.id}
@@ -385,11 +387,14 @@ function PlaylistSection({
                 "clip-row" +
                 (isSelected ? " selected" : "") +
                 (isCurrent ? " playing" : "") +
-                (clip.missing ? " missing" : "")
+                (clip.missing ? " missing" : "") +
+                (unplayable ? " unplayable" : "")
               }
               title={
                 clip.missing
                   ? `File not found: ${clip.path}`
+                  : unplayable
+                  ? `${clip.path}\nThis machine's media engine can't decode this file — transcode to H.264 .mp4/.mov. Auto-advance skips it.`
                   : `${clip.path}\nClick to cue · double-click to TAKE`
               }
               onClick={() => send({ type: "selectClip", payload: { id: clip.id } })}
@@ -583,6 +588,8 @@ function NowPlayingSection({
 
   const status = !clip
     ? "BLACK"
+    : t.error
+    ? "ERROR"
     : t.playing
     ? "PLAYING"
     : pos <= inMs
@@ -616,6 +623,14 @@ function NowPlayingSection({
       >
         {clip ? clip.name : "—"}
       </div>
+      {t.error && clip && (
+        <div
+          className="now-playing-error"
+          title="The output could not play this file. Transcode to H.264 in .mp4/.mov for reliable playback"
+        >
+          ⚠ Cannot play “{clip.name}” — {t.error}
+        </div>
+      )}
       <div className="timecodes">
         <div className="timecode-group">
           <span className="timecode-caption">Elapsed</span>

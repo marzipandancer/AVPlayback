@@ -202,6 +202,13 @@ select {
   color: #ff6b5e;
   text-decoration: line-through;
 }
+.clip-row.unplayable {
+  color: var(--amber);
+}
+.clip-row.unplayable .clip-duration {
+  color: var(--amber);
+  font-weight: 700;
+}
 
 .clip-index {
   width: 22px;
@@ -376,6 +383,18 @@ select {
   background: #000000;
   color: #999999;
   border: 1px solid #555555;
+}
+.status-chip.error {
+  background: var(--alert);
+  color: #ffffff;
+}
+
+.now-playing-error {
+  text-align: center;
+  color: #ff6b5e;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 8px;
 }
 
 .control-preview {

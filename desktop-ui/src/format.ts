@@ -47,11 +47,15 @@ export function clipRuntimeMs(clip: Clip): number {
   return Math.max(0, (clip.outMs ?? clip.durationMs) - clip.inMs);
 }
 
+/** The probe flagged this file as undecodable by the system media engine. */
+export const isUnplayable = (clip: Clip) =>
+  !clip.missing && clip.durationMs !== null && clip.durationMs <= 0;
+
 /** Duration cell for a clip: probing and unreadable states show placeholders. */
 export function clipDurationLabel(clip: Clip): string {
   if (clip.missing) return "missing";
   if (clip.durationMs === null) return "…";
-  if (clip.durationMs <= 0) return "—";
+  if (clip.durationMs <= 0) return "⚠ n/a";
   return (isTrimmed(clip) ? "✂ " : "") + formatTime(clipRuntimeMs(clip));
 }
 

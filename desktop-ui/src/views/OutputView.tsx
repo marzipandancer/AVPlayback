@@ -154,7 +154,30 @@ export function OutputView({ store }: { store: Store }) {
           }}
           onSeeked={() => report(false)}
           onEnded={() => report(true)}
-          onError={() => setMediaError(true)}
+          onError={() => {
+            setMediaError(true);
+            // Tell the control window why nothing is rolling.
+            const code = videoRef.current?.error?.code;
+            const msg =
+              code === 4
+                ? "format not supported by this machine's media engine"
+                : code === 3
+                ? "decode failed — corrupt file or unsupported codec"
+                : code === 2
+                ? "file could not be read"
+                : "playback error";
+            send({
+              type: "mediaStatus",
+              payload: {
+                loadSeq: loadSeqRef.current,
+                positionMs: 0,
+                durationMs: 0,
+                ended: false,
+                native: isTauri,
+                error: msg,
+              },
+            });
+          }}
         />
       )}
       {mediaError && clip && (

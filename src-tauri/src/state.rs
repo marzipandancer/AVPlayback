@@ -124,6 +124,10 @@ pub struct TransportState {
     pub seek_ms: f64,
     pub volume: f64,
     pub muted: bool,
+    /// Playback failure reported by the output ("format not supported…"),
+    /// surfaced on the control window. Cleared by the next load.
+    #[serde(default)]
+    pub error: Option<String>,
     #[serde(skip)]
     pub last: Option<Instant>,
 }
@@ -140,6 +144,7 @@ impl Default for TransportState {
             seek_ms: 0.0,
             volume: 1.0,
             muted: false,
+            error: None,
             last: None,
         }
     }
@@ -172,6 +177,7 @@ impl TransportState {
         self.position_ms = start_ms.max(0.0);
         self.duration_ms = duration_ms.max(0.0);
         self.load_seq += 1;
+        self.error = None;
         self.last = Some(Instant::now());
     }
 
@@ -447,6 +453,13 @@ impl Default for AppState {
     }
 }
 
+/// A clip the deck can actually roll: present on disk and not flagged
+/// unplayable by the probe (duration Some(0) = the media engine refused it).
+/// Unprobed clips (None) get the benefit of the doubt.
+fn playable(c: &Clip) -> bool {
+    !c.missing && c.duration_ms.map(|d| d > 0.0).unwrap_or(true)
+}
+
 impl AppState {
     fn clip(&self, id: &str) -> Option<&Clip> {
         self.clips.iter().find(|c| c.id == id)
@@ -457,12 +470,13 @@ impl AppState {
         self.clip(id).map(|c| c.in_ms).unwrap_or(0.0)
     }
 
-    /// The clip after `id` in playlist order, skipping missing files.
+    /// The clip after `id` in playlist order, skipping anything unplayable
+    /// so an auto-advancing show never stalls on a bad file.
     fn next_after(&self, id: &str) -> Option<String> {
         let i = self.clips.iter().position(|c| c.id == id)?;
         self.clips[i + 1..]
             .iter()
-            .find(|c| !c.missing)
+            .find(|c| playable(c))
             .map(|c| c.id.clone())
     }
 
@@ -500,7 +514,13 @@ impl AppState {
     }
 }
 
-const VIDEO_EXTENSIONS: [&str; 6] = ["mp4", "m4v", "mov", "webm", "mpg", "mpeg"];
+/// Accept anything that plausibly holds video and let the metadata probe
+/// judge playability — silently ignoring a dropped .avi reads as a bug,
+/// while an added-but-flagged clip explains itself.
+const VIDEO_EXTENSIONS: &[&str] = &[
+    "mp4", "m4v", "mov", "webm", "mpg", "mpeg", "avi", "mkv", "wmv", "flv",
+    "ts", "m2ts", "mts", "3gp", "mxf", "ogv",
+];
 
 fn is_video_path(path: &str) -> bool {
     std::path::Path::new(path)
@@ -697,6 +717,11 @@ pub enum Command {
         ended: bool,
         #[serde(default)]
         native: bool,
+        /// Set when the media engine refused the file (bad codec, corrupt
+        /// stream, container mismatch) — stops the transport and surfaces
+        /// on the control window.
+        #[serde(default)]
+        error: Option<String>,
     },
     /// Choose (or clear) the backup deck this one mirrors commands to.
     SetFollower { target: Option<String> },
@@ -820,14 +845,17 @@ pub fn dispatch(app: &AppHandle, cmd: Command) {
 /// Resolve and execute a take. Returns the playlist index of the clip that
 /// went to program, for sync forwarding.
 fn do_take(st: &mut AppState, requested: Option<String>) -> Option<usize> {
+    // An explicitly requested clip only needs to exist (the operator may
+    // insist, and the error will surface); automatic fallbacks stick to
+    // clips the deck can actually roll.
     let target = requested
         .filter(|id| st.clips.iter().any(|c| c.id == *id && !c.missing))
         .or_else(|| {
             st.selected
                 .clone()
-                .filter(|id| st.clips.iter().any(|c| c.id == *id && !c.missing))
+                .filter(|id| st.clips.iter().any(|c| c.id == *id && playable(c)))
         })
-        .or_else(|| st.clips.iter().find(|c| !c.missing).map(|c| c.id.clone()))?;
+        .or_else(|| st.clips.iter().find(|c| playable(c)).map(|c| c.id.clone()))?;
     let start = st.clip_in(&target);
     let dur = st.clip(&target).and_then(|c| c.duration_ms).unwrap_or(0.0);
     st.transport.load(Some(target.clone()), true, start, dur);
@@ -1123,6 +1151,7 @@ pub fn dispatch_ext(app: &AppHandle, cmd: Command, from_sync: bool) {
                 duration_ms,
                 ended,
                 native,
+                error,
             } => {
                 // With the native output window open it is the sole timing
                 // authority; web outputs are confidence monitors whose
@@ -1138,21 +1167,29 @@ pub fn dispatch_ext(app: &AppHandle, cmd: Command, from_sync: bool) {
                     && load_seq == st.transport.load_seq
                     && st.transport.current.is_some()
                 {
-                    if position_ms.is_finite() {
-                        st.transport.position_ms = position_ms.max(0.0);
-                    }
-                    if duration_ms.is_finite() && duration_ms > 0.0 {
-                        st.transport.duration_ms = duration_ms;
-                        let current = st.transport.current.clone();
-                        if let Some(id) = current {
-                            if let Some(c) = st.clips.iter_mut().find(|c| c.id == id) {
-                                c.duration_ms = Some(duration_ms);
+                    if let Some(err) = error {
+                        // Nothing is rolling: stop the runaway clock and put
+                        // the failure where the operator is looking.
+                        st.transport.error = Some(err);
+                        st.transport.playing = false;
+                        st.transport.last = Some(Instant::now());
+                    } else {
+                        if position_ms.is_finite() {
+                            st.transport.position_ms = position_ms.max(0.0);
+                        }
+                        if duration_ms.is_finite() && duration_ms > 0.0 {
+                            st.transport.duration_ms = duration_ms;
+                            let current = st.transport.current.clone();
+                            if let Some(id) = current {
+                                if let Some(c) = st.clips.iter_mut().find(|c| c.id == id) {
+                                    c.duration_ms = Some(duration_ms);
+                                }
                             }
                         }
-                    }
-                    st.transport.last = Some(Instant::now());
-                    if ended {
-                        apply_end_mode(&mut st);
+                        st.transport.last = Some(Instant::now());
+                        if ended {
+                            apply_end_mode(&mut st);
+                        }
                     }
                 }
                 persist = false;
@@ -1402,7 +1439,7 @@ fn apply_end_mode(st: &mut AppState) {
 fn browse_files(app: &AppHandle) {
     let app = app.clone();
     tauri::api::dialog::FileDialogBuilder::new()
-        .add_filter("Video", &VIDEO_EXTENSIONS)
+        .add_filter("Video", VIDEO_EXTENSIONS)
         .pick_files(move |files| {
             if let Some(files) = files {
                 let paths = files

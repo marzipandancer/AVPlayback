@@ -1,6 +1,6 @@
 {
   "$schema": "https://tauri.app/v1/schema.json",
-  "package": { "productName": "AVPlayback", "version": "0.1.1" },
+  "package": { "productName": "AVPlayback", "version": "0.1.2" },
   "build": {
     "beforeDevCommand": "pnpm --dir ./desktop-ui dev",
     "devPath": "http://localhost:5174",

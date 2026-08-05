@@ -44,6 +44,8 @@ export interface TransportState {
   seekMs: number;
   volume: number;
   muted: boolean;
+  /** Playback failure reported by the output; cleared by the next load. */
+  error: string | null;
 }
 
 export interface Iface {
@@ -160,6 +162,8 @@ export type Command =
         ended: boolean;
         /** True when reported by the native output window. */
         native: boolean;
+        /** Set when the media engine refused the file. */
+        error?: string;
       };
     }
   | {
