@@ -58,18 +58,33 @@ pub fn launch(app: &AppHandle) {
 
 /// Center a window of the given logical size on a monitor.
 ///
-/// Monitor coordinates are physical pixels; window positions must be logical.
-/// With mixed-DPI monitors the physical values don't form one consistent
-/// coordinate space, so convert with the monitor's own scale factor.
-fn centered_on(m: &MonitorInfo, w: f64, h: f64) -> tauri::LogicalPosition<f64> {
+/// macOS: window positions are logical, and logical coordinates form one
+/// consistent global space, so convert with the monitor's own scale factor.
+#[cfg(target_os = "macos")]
+fn centered_on(m: &MonitorInfo, w: f64, h: f64) -> tauri::Position {
     let lw = m.width as f64 / m.scale;
     let lh = m.height as f64 / m.scale;
     let lx = m.x as f64 / m.scale;
     let ly = m.y as f64 / m.scale;
-    tauri::LogicalPosition::new(
+    tauri::Position::Logical(tauri::LogicalPosition::new(
         lx + ((lw - w) / 2.0).max(0.0),
         ly + ((lh - h) / 2.0).max(0.0),
-    )
+    ))
+}
+
+/// Windows/Linux: a LogicalPosition is converted using the scale of the
+/// monitor the window is CURRENTLY on, not the target's — with mixed-DPI
+/// setups (scaled laptop panel + 100% output display) the window lands on
+/// the wrong monitor. Physical pixels are unambiguous, so use those; the
+/// window's expected physical size uses the target monitor's scale.
+#[cfg(not(target_os = "macos"))]
+fn centered_on(m: &MonitorInfo, w: f64, h: f64) -> tauri::Position {
+    let pw = w * m.scale;
+    let ph = h * m.scale;
+    tauri::Position::Physical(tauri::PhysicalPosition::new(
+        m.x + (((m.width as f64 - pw) / 2.0).max(0.0)) as i32,
+        m.y + (((m.height as f64 - ph) / 2.0).max(0.0)) as i32,
+    ))
 }
 
 /// Move an already-open output window onto the selected monitor.

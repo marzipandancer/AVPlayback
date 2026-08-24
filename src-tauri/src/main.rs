@@ -12,8 +12,14 @@ fn get_state(app: tauri::AppHandle) -> serde_json::Value {
     state::state_json(&app)
 }
 
+// Async on purpose: sync commands run on the main thread, and creating a
+// webview window there (LaunchOutput) deadlocks WebView2 initialization on
+// Windows — the documented symptom is a permanently white output window.
+// Async commands run on the async runtime, so run_on_main_thread genuinely
+// queues to a free event loop. (The WS remote path already dispatches from
+// worker threads; this makes the native windows match it.)
 #[tauri::command]
-fn dispatch(app: tauri::AppHandle, command: state::Command) {
+async fn dispatch(app: tauri::AppHandle, command: state::Command) {
     state::dispatch(&app, command);
 }
 

@@ -28,14 +28,19 @@
    Control window layout
    -------------------------------------------------------------------------- */
 
+/* Fixed to the viewport: the window never scrolls as a page. The preview is
+   the flexible element that absorbs or gives up height, so the layout adapts
+   to whatever resolution the device has; if a window is squeezed below even
+   that, the panels scroll internally as a last resort. */
 .control-root {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   padding: 8px 14px 10px;
   gap: 8px;
   background: var(--bg);
   user-select: none;
+  overflow: hidden;
 }
 
 .columns {
@@ -43,11 +48,13 @@
   gap: 14px;
   flex: 1;
   align-items: stretch;
+  min-height: 0;
 }
 
 .col {
   flex: 1;
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -61,6 +68,7 @@
 
 .panel {
   flex: 1;
+  min-height: 0;
   border: 2px solid var(--stroke);
   border-radius: 10px;
   background: #000000;
@@ -68,6 +76,13 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow-y: auto;
+}
+
+/* Sections keep their natural height when space runs short — only the
+   elements that opt in (preview, clip list) flex. */
+.panel > * {
+  flex-shrink: 0;
 }
 
 .section-bar {
@@ -154,8 +169,8 @@ select {
 /* Playlist ------------------------------------------------------------------ */
 
 .clip-list {
-  flex: 1;
-  min-height: 220px;
+  flex: 1 1 0;
+  min-height: 120px;
   overflow-y: auto;
   border: 1px solid #444444;
   border-radius: 6px;
@@ -397,10 +412,17 @@ select {
   padding: 0 8px;
 }
 
+/* Height-driven: the preview flexes to absorb whatever vertical space the
+   panel has left, so short displays get a smaller preview instead of a
+   scrolling window. Width follows from the aspect ratio. */
 .control-preview {
   position: relative;
   aspect-ratio: 16 / 9;
-  width: 62%;
+  flex: 1 1 140px;
+  min-height: 84px;
+  max-height: 320px;
+  width: auto;
+  max-width: 92%;
   align-self: center;
   background: #000000;
   border: 1px solid #555555;
@@ -734,6 +756,7 @@ select {
   align-items: center;
   justify-content: space-between;
   padding: 0 2px;
+  flex-shrink: 0;
 }
 
 .footer-actions {
@@ -861,4 +884,42 @@ select {
   padding: 5px 14px;
   border-radius: 6px;
   z-index: 60;
+}
+
+/* --------------------------------------------------------------------------
+   Short displays (1366×768 laptops, 1080p at 125% scale): tighten spacing
+   and the big readouts so every control still fits on screen. Kept at the
+   end of the file so these override the base rules above.
+   -------------------------------------------------------------------------- */
+
+@media (max-height: 900px) {
+  .control-root {
+    padding: 6px 12px 8px;
+    gap: 6px;
+  }
+  .panel {
+    gap: 6px;
+    padding: 10px;
+  }
+  .timecode {
+    font-size: 22px;
+    padding: 3px 4px;
+  }
+  .timecode-remaining {
+    font-size: 26px;
+  }
+  .btn-take {
+    font-size: 19px;
+    padding: 8px 12px;
+  }
+  .now-playing-name {
+    font-size: 16px;
+    min-height: 20px;
+  }
+  .col-label {
+    padding: 0 0 3px;
+  }
+  .wordmark {
+    font-size: 20px;
+  }
 }

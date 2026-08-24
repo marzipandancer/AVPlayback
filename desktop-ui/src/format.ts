@@ -99,11 +99,16 @@ export function videoGeometryStyle(g: Geometry): CSSProperties {
 /**
  * Base URL for streaming a clip. Native windows go straight to the built-in
  * server; web clients use a relative URL on whatever host served them.
+ *
+ * Native windows must use loopback, not the LAN IP: on Windows the app
+ * origin is https://tauri.localhost (a secure context), and Chromium blocks
+ * plain-http media from any host EXCEPT loopback as mixed content. When the
+ * server is bound to one specific interface, loopback isn't listening, so
+ * fall back to that interface's IP (pre-fix behavior).
  */
 export function mediaUrl(state: AppState, id: string, loadSeq?: number): string {
-  const base = isTauri
-    ? `http://${state.network.ip}:${state.network.port}`
-    : "";
+  const host = state.network.iface ? state.network.ip : "127.0.0.1";
+  const base = isTauri ? `http://${host}:${state.network.port}` : "";
   const bust = loadSeq !== undefined ? `?v=${loadSeq}` : "";
   return `${base}/media/${id}${bust}`;
 }
