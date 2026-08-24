@@ -8,6 +8,12 @@ use tokio::sync::broadcast;
 /// run on the same show machine.
 pub const DEFAULT_PORT: u16 = 3100;
 
+/// How far a backup deck may lag/lead the main's mirrored playhead before it
+/// corrects with a seek. Wide enough that LAN jitter and the media element's
+/// settle time never cause a seek storm; tight enough to be invisible on a
+/// program cut to the backup.
+pub const SYNC_CHASE_TOLERANCE_MS: f64 = 120.0;
+
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
@@ -154,7 +160,7 @@ impl TransportState {
     /// Fold elapsed wall time into `position_ms` so snapshots taken between
     /// output reports don't jump backwards. The next MediaStatus report
     /// overwrites the extrapolation with the real media position.
-    fn rebase(&mut self) {
+    pub(crate) fn rebase(&mut self) {
         let now = Instant::now();
         if self.playing {
             if let Some(last) = self.last {
@@ -728,6 +734,10 @@ pub enum Command {
     /// Full playlist layout pushed by a main deck after media transfer.
     /// Only ever arrives over a sync connection.
     SyncPlaylist { clips: Vec<SyncClipMeta> },
+    /// Periodic playhead broadcast from a main deck. Only ever arrives over
+    /// a sync connection; the backup chases it (commands alone leave the
+    /// backup behind by its start latency, then drifting on its own clock).
+    SyncClock { index: usize, position_ms: f64, playing: bool },
     // Windows / settings
     SetHotkey { action: HotkeyAction, binding: Option<String> },
     SetLaunchFullscreen { enabled: bool },
@@ -1132,6 +1142,27 @@ pub fn dispatch_ext(app: &AppHandle, cmd: Command, from_sync: bool) {
                     apply_sync_playlist(app, &mut st, clips);
                 }
                 mirror = false;
+            }
+            Command::SyncClock { index, position_ms, playing } => {
+                // Chase the main deck's playhead, but only when both decks
+                // are rolling the same playlist row in the same play state —
+                // mirrored commands own every other transition. rebase() at
+                // the top of dispatch made our own position current.
+                if from_sync {
+                    let same_clip = st
+                        .transport
+                        .current
+                        .as_ref()
+                        .and_then(|id| st.clips.iter().position(|c| c.id == *id))
+                        == Some(index);
+                    if same_clip
+                        && st.transport.playing == playing
+                        && (st.transport.position_ms - position_ms).abs() > SYNC_CHASE_TOLERANCE_MS
+                    {
+                        st.transport.seek(position_ms);
+                    }
+                }
+                persist = false;
             }
             Command::SetAspect { aspect } => st.geometry.aspect = aspect,
             Command::SetOutputScale { scale } => {

@@ -34,8 +34,49 @@ fn instance_id() -> u64 {
 pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(beacon_sender(app.clone()));
     tauri::async_runtime::spawn(beacon_listener(app.clone()));
+    tauri::async_runtime::spawn(clock_sender(app.clone()));
     start_mirror_worker(app.clone());
     restart_follower(app);
+}
+
+/// Once a second, forward the main deck's playhead to the linked backup so
+/// it can chase (see Command::SyncClock). Mirrored commands alone leave the
+/// backup behind by its own media start latency — several hundred ms on
+/// Windows — and then each deck's video element free-runs, so decks drift.
+async fn clock_sender(app: AppHandle) {
+    loop {
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        let msg: Option<String> = {
+            let shared = app.state::<Shared>();
+            if shared.sync_tx.lock().unwrap().is_none() {
+                continue;
+            }
+            let mut st = shared.state.lock().unwrap();
+            st.transport.rebase();
+            st.transport
+                .current
+                .as_ref()
+                .and_then(|id| st.clips.iter().position(|c| c.id == *id))
+                .map(|index| {
+                    serde_json::json!({
+                        "type": "syncClock",
+                        "payload": {
+                            "index": index,
+                            "positionMs": st.transport.position_ms,
+                            "playing": st.transport.playing,
+                        }
+                    })
+                    .to_string()
+                })
+        };
+        if let Some(msg) = msg {
+            let shared = app.state::<Shared>();
+            let tx = shared.sync_tx.lock().unwrap();
+            if let Some(tx) = &*tx {
+                let _ = tx.send(msg);
+            }
+        }
+    }
 }
 
 async fn beacon_sender(app: AppHandle) {
