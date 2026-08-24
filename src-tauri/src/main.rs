@@ -7,6 +7,8 @@ mod server;
 mod state;
 mod sync;
 
+use tauri::Manager;
+
 #[tauri::command]
 fn get_state(app: tauri::AppHandle) -> serde_json::Value {
     state::state_json(&app)
@@ -26,6 +28,16 @@ async fn dispatch(app: tauri::AppHandle, command: state::Command) {
 fn main() {
     tauri::Builder::default()
         .manage(state::Shared::new())
+        // Closing the control window quits the whole app. Without this the
+        // output window and the web server keep the process alive headless —
+        // on Windows the only way out was task manager.
+        .on_window_event(|ev| {
+            if ev.window().label() == "control" {
+                if let tauri::WindowEvent::CloseRequested { .. } = ev.event() {
+                    ev.window().app_handle().exit(0);
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![get_state, dispatch])
         .setup(|app| {
             let handle = app.handle();

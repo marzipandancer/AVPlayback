@@ -1,6 +1,6 @@
 {
   "$schema": "https://tauri.app/v1/schema.json",
-  "package": { "productName": "AVPlayback", "version": "0.1.3" },
+  "package": { "productName": "AVPlayback", "version": "0.1.4" },
   "build": {
     "beforeDevCommand": "pnpm --dir ./desktop-ui dev",
     "devPath": "http://localhost:5174",
@@ -11,8 +11,17 @@
     "allowlist": {
       "dialog": { "open": true }
     },
+    "updater": {
+      "active": true,
+      "dialog": true,
+      "endpoints": [
+        "https://github.com/marzipandancer/AVPlayback/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZBRjUzOTc0NjBENTM3RkEKUldUNk45VmdkRG4xYXNWeTBRdWduMXg0eU5iU1BBQWpjME5OR2RIMHRjZlI3T0o5UW0yK1BWWk0K"
+    },
     "bundle": {
       "active": true,
+      "targets": ["app", "dmg", "msi", "appimage", "deb", "rpm", "updater"],
       "identifier": "com.avplayback.app",
       "icon": [
         "icons/32x32.png",
