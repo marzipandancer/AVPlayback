@@ -90,7 +90,8 @@ follows the state override).
 
 ## Show features
 
-- Per-clip **loop** checkbox in the playlist (overrides the end mode).
+- Per-clip **⟳ LOOP** toggle in the playlist (overrides the end mode).
+  Now Playing shows a LOOP chip while a looping clip plays.
 - Per-clip **in/out trim**: play or scrub to the spot, Mark In (I) /
   Mark Out (O). Timecodes, totals and end-of-clip behavior follow the
   trim; markers show on the progress bar.
