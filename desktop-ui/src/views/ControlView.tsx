@@ -10,7 +10,7 @@ import {
   mediaUrl,
   videoGeometryStyle,
 } from "../format";
-import { comboFromEvent, comboLabel } from "../hotkeys";
+import { comboFromEvent, comboLabel, useHotkeys } from "../hotkeys";
 import {
   useDisplayPosition,
   useTicker,
@@ -68,52 +68,7 @@ export function ControlView({ store }: { store: Store }) {
     };
   }, [send]);
 
-  // Configurable hotkeys (default Space = take, K = kill, P = pause…).
-  // Ignored while typing in a field; a recording HotkeyRow swallows the
-  // event in the capture phase before this bubble-phase handler runs.
-  useEffect(() => {
-    if (!snap) return;
-    const hk = snap.state.hotkeys;
-    const handler = (e: KeyboardEvent) => {
-      const t = e.target as HTMLElement;
-      if (t.tagName === "INPUT" || t.tagName === "SELECT" || t.tagName === "TEXTAREA")
-        return;
-      const combo = comboFromEvent(e);
-      if (!combo) return;
-      const cmd: Command | null =
-        combo === hk.take
-          ? { type: "take", payload: { id: null } }
-          : combo === hk.playPause
-          ? { type: "playPause" }
-          : combo === hk.kill
-          ? { type: "kill" }
-          : combo === hk.restart
-          ? { type: "restart" }
-          : combo === hk.prevClip
-          ? { type: "selectDelta", payload: { delta: -1 } }
-          : combo === hk.nextClip
-          ? { type: "selectDelta", payload: { delta: 1 } }
-          : combo === hk.jumpBack
-          ? { type: "jump", payload: { deltaMs: -10000 } }
-          : combo === hk.jumpFwd
-          ? { type: "jump", payload: { deltaMs: 10000 } }
-          : combo === hk.markIn
-          ? { type: "markIn" }
-          : combo === hk.markOut
-          ? { type: "markOut" }
-          : combo === hk.launchOutput
-          ? { type: "launchOutput" }
-          : combo === hk.toggleFullscreen
-          ? { type: "toggleFullscreen" }
-          : null;
-      if (cmd) {
-        e.preventDefault();
-        send(cmd);
-      }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [snap, send]);
+  useHotkeys(snap, send);
 
   if (!snap) {
     return <div className="output-view output-waiting">Connecting…</div>;
@@ -423,7 +378,7 @@ function PlaylistSection({
                     })
                   }
                 />
-                ⟳
+                ⟳ LOOP
               </label>
               <span
                 className="clip-duration"
@@ -614,7 +569,17 @@ function NowPlayingSection({
     <>
       <SectionBar>
         Now Playing
-        <span className={"status-chip " + status.toLowerCase()}>{status}</span>
+        <span className="bar-chips">
+          {clip?.loop && (
+            <span
+              className="status-chip loop"
+              title="This clip loops when it ends, whatever the end mode"
+            >
+              ⟳ LOOP
+            </span>
+          )}
+          <span className={"status-chip " + status.toLowerCase()}>{status}</span>
+        </span>
       </SectionBar>
       <ControlPreview snap={snap} posMs={posMs} />
       <div

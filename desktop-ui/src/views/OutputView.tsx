@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { mediaUrl, videoGeometryStyle } from "../format";
+import { useHotkeys } from "../hotkeys";
 import { type Store } from "../store";
 import { isTauri } from "../transport";
 
@@ -13,6 +14,11 @@ import { isTauri } from "../transport";
  */
 export function OutputView({ store }: { store: Store }) {
   const { snap, connected, send } = store;
+  // The native output window takes focus when it opens, and fullscreen keeps
+  // it there. Without this, the hotkeys were dead until the operator clicked
+  // back on the control window. Web outputs (unattended LAN displays) stay
+  // inert.
+  useHotkeys(snap, send, isTauri);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [needsGesture, setNeedsGesture] = useState(false);
   const [mediaError, setMediaError] = useState(false);
